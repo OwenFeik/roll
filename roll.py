@@ -2,13 +2,31 @@ import heapq
 import operator
 import random
 import re
-import types
 import typing
 
 numeric = typing.Union[int, float]
 
 
+class Modifier:
+    def __init__(self, val: numeric, opstr: str):
+        self.val = val
+        self.opstr = opstr
+        self.operation = get_operator(opstr)
+
+    def __str__(self):
+        return f"{self.opstr} {self.val}"
+
+    def apply(self, val: numeric) -> numeric:
+        return self.operation(val, self.val)
+
+    @staticmethod
+    def from_string(string: str) -> "Modifier":
+        return Modifier(int(string[1:]), string[0])
+
+
 class Roll:
+    MAX_QTY = 1000
+
     def __init__(
         self,
         qty: int,
@@ -17,7 +35,7 @@ class Roll:
         disadv: bool,
         keep: int,
         modifiers: typing.List[Modifier],
-        operation: types.FunctionType,
+        operation: typing.Callable,
     ):
         self.qty = qty
         self.die = die
@@ -27,12 +45,12 @@ class Roll:
         self.modifiers = modifiers
         self.operation = operation
 
-        if self.qty > 1000:
+        if self.qty > Roll.MAX_QTY:
             raise ValueError("Maximum quantity exceeded.")
 
         self.resolved = False
-        self._rolls = []
-        self._total = 0
+        self._rolls: typing.List[int] = []
+        self._total: numeric = 0
 
     def __str__(self):
         return self.desc_str() + self.roll_str()
@@ -90,10 +108,6 @@ class Roll:
             self.resolve()
         return self._rolls
 
-    def ensure_rolled(self) -> None:
-        if self._rolls is None:
-            self._rolls = [random.randint(1, self.die) for _ in range(self.qty)]
-
     def calculate_total(self) -> numeric:
         if self.adv:
             total = max(self._rolls)
@@ -107,14 +121,17 @@ class Roll:
         self._total = self.apply_mods(total)
         return self._total
 
-    def resolve(self) -> (typing.List[int], numeric):
-        self.ensure_rolled()
-        self.calculate_total()
-        self.resolved = True
+    def ensure_rolled(self) -> None:
+        if not self.resolved:
+            self._rolls = [random.randint(1, self.die) for _ in range(self.qty)]
+            self.calculate_total()
+            self.resolved = True
 
+    def resolve(self) -> typing.Tuple[typing.List[int], numeric]:
+        self.ensure_rolled()
         return self._rolls, self._total
 
-    def reroll(self, n: int) -> None:
+    def reroll(self, n: int) -> typing.Tuple[typing.List[int], numeric]:
         for r in heapq.nsmallest(n, self.rolls):
             self._rolls[self._rolls.index(r)] = random.randint(1, self.die)
 
@@ -135,29 +152,13 @@ class Roll:
         self.modifiers.append(modifier)
 
 
-class Modifier:
-    def __init__(self, val: numeric, opstr: str):
-        self.val = val
-        self.opstr = opstr
-        self.operation = get_operator(opstr)
-
-    def __str__(self):
-        return f"{self.opstr} {self.val}"
-
-    def apply(self, val: numeric) -> numeric:
-        return self.operation(val, self.val)
-
-    @staticmethod
-    def from_string(string: str) -> Modifier:
-        return Modifier(int(string[1:]), string[0])
-
-
-def get_operator(opstr: str) -> types.FunctionType:
+def get_operator(opstr: str) -> typing.Callable:
     return {
         "+": operator.add,
         "-": operator.sub,
         "*": operator.mul,
         "/": operator.truediv,
+        "\\": lambda a, b: operator.truediv(b, a),
     }[opstr]
 
 
@@ -167,27 +168,65 @@ def clean_number(num: numeric) -> numeric:
     return round(num, 2)
 
 
-def get_rolls(string: str, max_qty: int=-1) -> typing.List[Roll]:
+def parse_mods(modstr: str) -> typing.Tuple[typing.List[Modifier], int]:
+    mods = []
+    keep = -1
+    if not modstr in [None, ""]:
+        modstr = modstr.replace(" ", "") + "k"
+        # Add k to ensure last term is added
+        # won't cause an error in a properly formatted string
+
+        q = ""
+        o = ""
+        for c in modstr:
+            if c in ["k", "+", "-", "*", "/"]:
+                if o == "k" and q:
+                    if keep > 0:
+                        raise ValueError("Multiple keep values provided.")
+                    keep = int(q)
+                elif o:
+                    mods.append(Modifier(int(q), o))
+                o = c
+                q = ""
+            else:
+                q += c
+
+    return mods, keep
+
+
+def get_rolls(string: str, max_qty: int = -1) -> typing.List[Roll]:
     rolls = []
+
+    # Explanation of groups in the below regex:
+    #
+    # const: a value before the roll followed by an operator. only applies for
+    #   single rolls. e.g. <2> + 2d20
+    # op: the operation to apply to the previous term in the string and the
+    #   roll. e.g. 2 <+> 2d20 <*> d10
+    # n: the number of times to do this roll. must be followed by a space.
+    #   e.g. <2> d20 <6> 4d6k3
+    # qty: the number of dice to roll
+    #   e.g. <2>d10 <8>d6
+    # die: the size of dice to roll
+    #   e.g. 2d<10> 8d<6>
+    # advstr: annotation to indicate whether the roll is at advantage or
+    #   disadvantage. any number of as and ds. e.g. d20<a> d20<addd>
+    # mods: modifiers of the form operator, value or keep x.
+    #   e.g. d20 <+ 8 - 2> 10d6<k8 + 2>
     regex = re.compile(
-        r"(?P<val>\d+(?= *[+-/*]))? *(?P<op>[+-/*]?)? *(?P<n>\d+"
+        r"(?P<const>\d+(?= *[+-/*]))? *(?P<op>[+-/*]?)? *(?P<n>\d+"
         r"(?= +))? *(?P<qty>\d*)d(?P<die>\d+) *(?P<advstr>[ad]*)"
-        r"(?P<mods>( *(k *\d+|[+-/*] *\d+(?!d)))*(?![\dd]))"
+        r"(?P<mods>( *(k *\d+|[+-/*] *\d+(?!d)))*(?![\dd]))",
+        flags=re.IGNORECASE,
     )
+
+    empty_group = lambda g: g in [None, ""]
 
     count = 0
     for roll in re.finditer(regex, string):
-        n = roll.group("n")
-        if n in [None, ""]:
-            n = 1
-        else:
-            n = int(n)
 
-        qty = roll.group("qty")
-        if qty in [None, ""]:
-            qty = 1
-        else:
-            qty = int(qty)
+        n = 1 if empty_group(roll.group("n")) else int(roll.group("n"))
+        qty = 1 if empty_group(roll.group("qty")) else int(roll.group("qty"))
 
         if qty == 0:
             raise ValueError("I can't roll a zero sided die.")
@@ -198,50 +237,29 @@ def get_rolls(string: str, max_qty: int=-1) -> typing.List[Roll]:
         advscore = advstr.count("a") - advstr.count("d")
         adv = advscore > 0
         disadv = advscore < 0
+
+        # a roll like d20a implicitly means 2d20a
         if (adv or disadv) and qty == 1:
             qty = 2
 
-        modstr = roll.group("mods")
-        mods = []
-        keep = -1
-        if not modstr in [None, ""]:
-            modstr = modstr.replace(" ", "") + "k"
-            # Add k to ensure last term is added
-            # won't cause an error in a properly formatted string
+        mods, keep = parse_mods(roll.group("mods"))
 
-            q = ""
-            o = ""
-            for c in modstr:
-                if c in ["k", "+", "-", "*", "/"]:
-                    if o == "k" and q:
-                        if keep > 0:
-                            raise ValueError("Multiple keep values provided.")
-                        keep = int(q)
-                    elif o:
-                        mods.append(Modifier(int(q), o))
-                    o = c
-                    q = ""
-                else:
-                    q += c
+        opstr = "+" if empty_group(roll.group("op")) else roll.group("op")
+        op = get_operator(opstr)
 
-        op = roll.group("op")
-        if op in [None, ""] or n > 1:
-            opstr = "+"
-        else:
-            opstr = op
+        const = roll.group("const")
+        if not empty_group(const):
+            if opstr == "/":
+                opstr = "\\"
 
-        val = roll.group("val")
-        if not val in [None, ""]:
-            mods.insert(0, Modifier(int(val), op))
+            mods.insert(0, Modifier(int(const), opstr))
             op = get_operator("+")
-        else:
-            op = get_operator(opstr)
 
         for _ in range(n):
             rolls.append(Roll(qty, die, adv, disadv, keep, mods, op))
 
         count += 1
         if max_qty > 0 and count == max_qty:
-            break 
+            break
 
     return rolls
