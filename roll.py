@@ -53,13 +53,18 @@ class Roll:
         self._total: numeric = 0
 
     def __str__(self):
-        return self.desc_str() + self.roll_str()
+        return self.full_str()
 
     def __repr__(self):
-        return str(self)
+        return f'<{str(self)}>'
 
     def full_str(self, pad_desc: int = 0, pad_roll: int = 0) -> str:
-        return self.desc_str(pad_desc) + self.roll_str(pad_roll)
+        string = self.desc_str(pad_desc) + '\t' + self.roll_str(pad_roll) 
+        
+        if self.modifiers or len(self.rolls) > 1:
+            string += f"\tTotal: {clean_number(self.total)}"
+
+        return string
 
     def desc_str(self, pad_to: int = 0) -> str:
         if (self.adv or self.disadv) and (self.qty == 2):
@@ -82,14 +87,10 @@ class Roll:
         return f"{self.qty}d{self.die}"
 
     def roll_str(self, pad_to: int = 0) -> str:
-        string = ""
         if len(self.rolls) > 1:
-            string += f"\tRolls: {str(self.rolls)[1:-1]}"
-            string += f" \tTotal: {clean_number(self.total)}"
+            string = f"Rolls: {str(self.rolls)[1:-1]}"
         else:
-            string += f"\tRoll: {self.rolls[0]}"
-            if self.modifiers:
-                string += f" \tTotal: {clean_number(self.total)}"
+            string = f"Roll: {self.rolls[0]}"
 
         while len(string) < pad_to:
             string += " "
@@ -263,3 +264,18 @@ def get_rolls(string: str, max_qty: int = -1) -> typing.List[Roll]:
             break
 
     return rolls
+
+def calc_total(rolls: typing.List[Roll]) -> numeric:
+    total = 0
+    for r in rolls:
+        total = r.apply(total)
+    
+    return total
+
+def rolls_string(rolls: typing.List[Roll]) -> str:
+    pad_desc = max([len(r.desc_str()) for r in rolls])
+    pad_roll = max([len(r.roll_str()) for r in rolls])
+    message = '\n'.join(r.full_str(pad_desc, pad_roll) for r in rolls)
+    message += f'\nGrand Total: {calc_total(rolls)}'
+
+    return message
