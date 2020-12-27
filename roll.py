@@ -8,6 +8,8 @@ numeric = typing.Union[int, float]
 
 
 class Modifier:
+    """Stores a value and operation and can apply itself to another value."""
+
     def __init__(self, val: numeric, opstr: str):
         self.val = val
         self.opstr = opstr
@@ -25,6 +27,8 @@ class Modifier:
 
 
 class Roll:
+    """Stores information and returns results for a parsed roll."""
+
     MAX_QTY = 1000
 
     def __init__(
@@ -56,26 +60,32 @@ class Roll:
         return self.full_str()
 
     def __repr__(self):
-        return f'<{str(self)}>'
+        return f"<{str(self)}>"
 
     def full_str(self, pad_desc: int = 0, pad_roll: int = 0) -> str:
-        string = self.desc_str(pad_desc) + '\t' + self.roll_str(pad_roll) 
-        
+        string = self.desc_str(pad_desc) + "\t" + self.roll_str(pad_roll)
+
         if self.modifiers or len(self.rolls) > 1:
             string += f"\tTotal: {clean_number(self.total)}"
 
         return string
 
     def desc_str(self, pad_to: int = 0) -> str:
-        if (self.adv or self.disadv) and (self.qty == 2):
-            string = f"d{self.die}"
-        else:
-            string = f"{self.qty if self.qty > 1 else ''}d{self.die}"
-        string += f"{'a' if self.adv else ''}{'d' if self.disadv else ''}"
+        string = "d" + str(self.die)
+
+        is_adv_roll = (self.adv or self.disadv) and (self.qty == 2)
+        if self.qty > 1 and not is_adv_roll:
+            string = self.qty if self.qty > 1 else "" + string
+
+        if self.adv:
+            string += "a"
+        if self.disadv:
+            string += "d"
+
         if self.keep >= 0:
             string += f" keep {self.keep}"
         for mod in self.modifiers:
-            string += f" {str(mod)}"
+            string += " " + str(mod)
 
         while len(string) < pad_to:
             string += " "
@@ -154,6 +164,14 @@ class Roll:
 
 
 def get_operator(opstr: str) -> typing.Callable:
+    """Return a function related to a given numeric operation string."""
+
+    # For the inverse division operator (hack), division is simply called
+    # with the operands reversed. Pylint assumes that this is a mistake when
+    # it is in fact intended.
+    #
+    # pylint: disable=arguments-out-of-order
+
     return {
         "+": operator.add,
         "-": operator.sub,
@@ -164,12 +182,16 @@ def get_operator(opstr: str) -> typing.Callable:
 
 
 def clean_number(num: numeric) -> numeric:
+    """Round to 2 or less decimal places."""
+
     if num // 1 == num:
         return int(num)
     return round(num, 2)
 
 
 def parse_mods(modstr: str) -> typing.Tuple[typing.List[Modifier], int]:
+    """Parse a string of modifier statements."""
+
     mods = []
     keep = -1
     if not modstr in [None, ""]:
@@ -196,6 +218,8 @@ def parse_mods(modstr: str) -> typing.Tuple[typing.List[Modifier], int]:
 
 
 def get_rolls(string: str, max_qty: int = -1) -> typing.List[Roll]:
+    """Parse a string for roll statements, returning a list of Roll objects."""
+
     rolls = []
 
     # Explanation of groups in the below regex:
@@ -214,6 +238,8 @@ def get_rolls(string: str, max_qty: int = -1) -> typing.List[Roll]:
     #   disadvantage. any number of as and ds. e.g. d20<a> d20<addd>
     # mods: modifiers of the form operator, value or keep x.
     #   e.g. d20 <+ 8 - 2> 10d6<k8 + 2>
+    #
+    # The expression accepts any number of spaces between terms.
     regex = re.compile(
         r"(?P<const>\d+(?= *[+-/*]))? *(?P<op>[+-/*]?)? *(?P<n>\d+"
         r"(?= +))? *(?P<qty>\d*)d(?P<die>\d+) *(?P<advstr>[ad]*)"
@@ -265,17 +291,23 @@ def get_rolls(string: str, max_qty: int = -1) -> typing.List[Roll]:
 
     return rolls
 
-def calc_total(rolls: typing.List[Roll]) -> numeric:
+
+def calculate_total(rolls: typing.List[Roll]) -> numeric:
+    """Calculate to total result of a list of Roll objects."""
+
     total = 0
     for r in rolls:
         total = r.apply(total)
-    
+
     return total
 
+
 def rolls_string(rolls: typing.List[Roll]) -> str:
+    """Return a descriptive string for a list of Roll objects."""
+
     pad_desc = max([len(r.desc_str()) for r in rolls])
     pad_roll = max([len(r.roll_str()) for r in rolls])
-    message = '\n'.join(r.full_str(pad_desc, pad_roll) for r in rolls)
-    message += f'\nGrand Total: {calc_total(rolls)}'
+    message = "\n".join(r.full_str(pad_desc, pad_roll) for r in rolls)
+    message += "\nGrand Total: " + str(calculate_total(rolls))
 
     return message
