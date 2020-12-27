@@ -75,7 +75,7 @@ class Roll:
 
         is_adv_roll = (self.adv or self.disadv) and (self.qty == 2)
         if self.qty > 1 and not is_adv_roll:
-            string = self.qty if self.qty > 1 else "" + string
+            string = str(self.qty) + string
 
         if self.adv:
             string += "a"
