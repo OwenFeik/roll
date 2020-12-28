@@ -305,9 +305,14 @@ def calculate_total(rolls: typing.List[Roll]) -> numeric:
 def rolls_string(rolls: typing.List[Roll]) -> str:
     """Return a descriptive string for a list of Roll objects."""
 
-    pad_desc = max([len(r.desc_str()) for r in rolls])
-    pad_roll = max([len(r.roll_str()) for r in rolls])
-    message = "\n".join(r.full_str(pad_desc, pad_roll) for r in rolls)
-    message += "\nGrand Total: " + str(calculate_total(rolls))
+    if len(rolls) == 1:
+        return str(rolls[0])
+    elif rolls:
+        pad_desc = max([len(r.desc_str()) for r in rolls])
+        pad_roll = max([len(r.roll_str()) for r in rolls])
+        message = "\n".join(r.full_str(pad_desc, pad_roll) for r in rolls)
+        message += "\nGrand Total: " + str(calculate_total(rolls))
 
-    return message
+        return message
+    else:
+        return ""
