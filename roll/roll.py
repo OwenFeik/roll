@@ -250,7 +250,7 @@ def get_rolls(string: str, max_qty: int = -1) -> typing.List[Roll]:
     empty_group = lambda g: g in [None, ""]
 
     count = 0
-    for roll in re.finditer(regex, string):
+    for roll in re.finditer(regex, string.lower()):
 
         n = 1 if empty_group(roll.group("n")) else int(roll.group("n"))
         qty = 1 if empty_group(roll.group("qty")) else int(roll.group("qty"))
@@ -261,9 +261,12 @@ def get_rolls(string: str, max_qty: int = -1) -> typing.List[Roll]:
         die = int(roll.group("die"))
 
         advstr = roll.group("advstr")
-        advscore = advstr.count("a") - advstr.count("d")
-        adv = advscore > 0
-        disadv = advscore < 0
+        adv = "a" in advstr
+        disadv = "d" in advstr
+
+        # if under advantage and disadvantage, roll is straight
+        if adv and disadv:
+            adv = disadv = False
 
         # a roll like d20a implicitly means 2d20a
         if (adv or disadv) and qty == 1:
