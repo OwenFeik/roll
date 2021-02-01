@@ -282,11 +282,16 @@ def get_rolls(string: str, max_qty: int = -1) -> typing.List[Roll]:
             if opstr == "/":
                 opstr = "\\"
 
-            mods.insert(0, Modifier(int(const), opstr))
+            special_mods = mods[:]
+
+            special_mods.insert(0, Modifier(int(const), opstr))
             op = get_operator("+")
 
+            n -= 1
+            rolls.append(Roll(qty, die, adv, disadv, keep, special_mods, op))
+
         for _ in range(n):
-            rolls.append(Roll(qty, die, adv, disadv, keep, mods, op))
+            rolls.append(Roll(qty, die, adv, disadv, keep, mods[:], op))
 
         count += 1
         if max_qty > 0 and count == max_qty:
