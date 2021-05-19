@@ -309,6 +309,11 @@ def calculate_total(rolls: typing.List[Roll]) -> numeric:
 
     return total
 
+def get_result(string: str) -> numeric:
+    """Calculate and return the total of rolls parsed from a string."""
+
+    return calculate_total(get_rolls(string))
+
 
 def rolls_string(rolls: typing.List[Roll]) -> str:
     """Return a descriptive string for a list of Roll objects."""
