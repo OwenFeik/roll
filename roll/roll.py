@@ -50,6 +50,9 @@ class Expr:
         # know this.
         return self._total  # type: ignore
 
+    def roll_info(self) -> typing.List[typing.Tuple[str, int]]:
+        return []
+
     def set_opstr(self, opstr):
         self.opstr = opstr
         self.operation = get_operator(opstr)
@@ -117,6 +120,12 @@ class SuperExpr(Expr):
     ) -> None:
         super().__init__(modifiers, opstr)
         self.exprs = exprs
+
+    def roll_info(self) -> typing.List[typing.Tuple[str, int]]:
+        info = []
+        for e in self.exprs:
+            info.extend(e.roll_info())
+        return info
 
     def desc_str(self, pad_to: int = 0, include_opstr: bool = False):
         return (
@@ -209,6 +218,9 @@ class RollExpr(Expr):
         if self._rolls is None:
             self.resolve()
         return self._rolls
+
+    def roll_info(self) -> typing.List[typing.Tuple[str, int]]:
+        return [(self.dice_str(), self.rolls)]
 
     def full_str(self, pad_desc: int = 0, pad_val: int = 0) -> str:
         return (
