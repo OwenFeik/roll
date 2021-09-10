@@ -416,7 +416,7 @@ def parse_roll_expr(expr) -> typing.Tuple[int, int, bool, bool, int]:
     return qty, die, adv, disadv, keep
 
 
-def parse_expr(string: str, opstr: str = "+"):
+def parse_expr(string: str, opstr: str = "+", modstr: str = ""):
     """Parse a bracketed sub-expression in a roll expression."""
     this_expr = ""
     ambig = ""
@@ -446,6 +446,10 @@ def parse_expr(string: str, opstr: str = "+"):
 
     this_modstr = extract_modstr(ambig)
     other_exprs = ambig[max(len(this_modstr) - 1, 0) :] + other_exprs
+    if other_exprs:
+        other_exprs += modstr
+    else:
+        this_modstr += modstr
 
     return [
         SuperExpr(parse(this_expr.strip()), parse_mods(this_modstr), opstr)
@@ -486,7 +490,9 @@ def parse(string: str):
         extras = []
 
         if not empty_group(match.group("expr")):
-            expr, *extras = parse_expr(match.group("expr"), opstr)
+            expr, *extras = parse_expr(
+                match.group("expr"), opstr, match.group("mods")
+            )
         elif not empty_group(match.group("c")):
             expr = ConstExpr(parse_integer_group(match.group("c")), mods, opstr)
         else:
