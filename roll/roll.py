@@ -143,13 +143,14 @@ class SuperExpr(Expr):
 
     def val_str(self, pad_to: int = 0, include_opstr: bool = False):
         return (
-            self.str_prefix(include_opstr)
-            + "("
-            + " ".join(
-                e.val_str(include_opstr=(i != 0))
-                for (i, e) in enumerate(self.exprs)
+            self.modf_str(include_opstr).format(
+                "("
+                + " ".join(
+                    e.val_str(include_opstr=(i != 0))
+                    for (i, e) in enumerate(self.exprs)
+                )
+                + ")"
             )
-            + ")"
         ).ljust(pad_to)
 
     def calculate_total(self):
@@ -177,7 +178,9 @@ class ConstExpr(Expr):
         return self.modf_str(include_opstr).format(self.val_str()).ljust(pad_to)
 
     def val_str(self, pad_to: int = 0, include_opstr: bool = False):
-        return (self.str_prefix(include_opstr) + str(self.val)).ljust(pad_to)
+        return (self.modf_str(include_opstr).format(str(self.val))).ljust(
+            pad_to
+        )
 
     def calculate_total(self):
         self._total = self.apply_mods(self.val)
