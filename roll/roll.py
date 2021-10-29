@@ -130,14 +130,14 @@ class RollToken(TerminalToken):
             self.token += c
             return None, self
         elif self.token == "d":
+            # This was actually a disadvantage operator
+            return OperatorToken(self.token), Token.from_char(c)
+        else:
             try:
                 self.qty
             except ValueError:
                 raise ValueError(f"Invalid die roll: {self.token}")
 
-            # This was actually a disadvantage operator
-            return OperatorToken(self.token), Token.from_char(c)
-        else:
             return self, Token.from_char(c)
 
 
