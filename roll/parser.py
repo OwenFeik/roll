@@ -1,3 +1,4 @@
+import enum
 import heapq
 import operator
 import random
@@ -5,6 +6,9 @@ import typing
 
 # Generic numeric base type
 Number = typing.Union[int, float]
+
+# Length 1 strings
+Char = str
 
 # During lexing this is used for return tuples of the form
 # (finished_token, current_token)
@@ -32,11 +36,11 @@ class Token:
     def __str__(self) -> str:
         return self.token
 
-    def consume(self, c: str) -> TokenPair:
+    def consume(self, c: Char) -> TokenPair:
         return self, Token.from_char(c)
 
     @staticmethod
-    def from_char(c: str) -> typing.Optional["Token"]:
+    def from_char(c: Char) -> typing.Optional["Token"]:
         if c == " ":
             return None
         elif c.isnumeric():
@@ -57,7 +61,7 @@ class Integer(Terminal):
         super().__init__(token=token)
         assert not token or token.isnumeric()
 
-    def consume(self, c: str) -> TokenPair:
+    def consume(self, c: Char) -> TokenPair:
         if c.isnumeric():
             self.token += c
             return None, self
@@ -80,7 +84,7 @@ class Decimal(Terminal):
         assert dot == "."
         assert not decimal or decimal.isnumeric()
 
-    def consume(self, c: str) -> TokenPair:
+    def consume(self, c: Char) -> TokenPair:
         if c.isnumeric():
             self.token += c
             return None, self
@@ -109,7 +113,7 @@ class Roll(Terminal):
     def size(self):
         return int(self.token.partition(Roll.SEPERATOR)[2])
 
-    def consume(self, c: str) -> TokenPair:
+    def consume(self, c: Char) -> TokenPair:
         if c.isnumeric():
             self.token += c
             return None, self
@@ -119,7 +123,7 @@ class Roll(Terminal):
 
 class NonTerminal(Token):
     @staticmethod
-    def from_char(c: str) -> typing.Optional[Token]:
+    def from_char(c: Char) -> typing.Optional[Token]:
         if c == "(":
             return OpenExpr()
         elif c == ")":
@@ -139,15 +143,15 @@ class CloseExpr(NonTerminal):
 
 
 class Operator(NonTerminal):
-    PRECEDENCE = {"k": 1, "*": 2, "/": 2, "+": 3, "-": 3}
-    MAX_PRECEDENCE = 3
-
     def __init__(self, token):
         super().__init__(token=token)
-        self.precedence = Operator.PRECEDENCE[token]
+
+    @property
+    def opstr(self):
+        return self.token
 
     @staticmethod
-    def from_char(c: str) -> typing.Optional[Token]:
+    def from_char(c: Char) -> typing.Optional[Token]:
         if c in "+-*/k":
             return Operator(c)
         else:
@@ -268,8 +272,98 @@ class NonTerminalExpr(Expr):
         return [info for expr in self.exprs for info in expr.roll_info()]
 
 
+class SuperExpr(NonTerminalExpr):
+    def __init__(self, exprs: typing.List[Expr]):
+        super().__init__(exprs)
+
+    def __repr__(self):
+        return (
+            type(self).__name__
+            + "<"
+            + " + ".join([f"({repr(expr)})" for expr in self.exprs])
+            + ">"
+        )
+
+    def __str__(self):
+        return " + ".join([f"({expr})" for expr in self.exprs])
+
+    @property
+    def value(self) -> Number:
+        return sum(expr.value for expr in self.exprs)
+
+
+class Fixity(enum.Enum):
+    INFIX = enum.auto()  # a op b
+    PREFIX = enum.auto()  # op a
+    POSTFIX = enum.auto()  # a op
+
+
+class OpExprSpecification:
+    MAX_PRECEDENCE = 0
+
+    def __init__(
+        self,
+        opstr: Char,
+        precedence: int,
+        fixity: Fixity,
+        arguments: typing.List[typing.Type[Expr]],
+        klasse: typing.Callable,
+    ) -> None:
+        self.opstr = opstr
+        self.precedence = precedence
+        self.fixity = fixity
+        self.arguments = arguments
+        self.klasse = klasse
+
+        if fixity is Fixity.INFIX:
+            assert len(arguments) == 2
+            self.left, self.right = arguments
+        else:
+            assert len(arguments) == 1
+            self.arg = arguments[0]
+
+        # Keep track of the operator with the highest precedence so that we
+        # can iterate up to it.
+        if precedence > OpExprSpecification.MAX_PRECEDENCE:
+            OpExprSpecification.MAX_PRECEDENCE = precedence
+
+    def satisfied(
+        self,
+        a: typing.Union[Expr, Operator, None],
+        b: typing.Union[Expr, Operator, None],
+        c: typing.Union[Expr, Operator, None],
+    ) -> bool:
+        if not isinstance(b, Operator) or b.opstr != self.opstr:
+            return False
+
+        if self.fixity is Fixity.INFIX:
+            return isinstance(a, self.left) and isinstance(c, self.right)
+        elif self.fixity is Fixity.PREFIX:
+            return isinstance(c, self.arg)
+        elif self.fixity is Fixity.POSTFIX:
+            return isinstance(a, self.arg)
+
+    def instantiate(
+        self,
+        a: typing.Union[Expr, Operator, None],
+        b: typing.Union[Expr, Operator, None],
+        c: typing.Union[Expr, Operator, None],
+    ) -> typing.Tuple[typing.List[Expr], int]:
+        # The typing ignores in this function are to suppress type issues which
+        # are handled by the below assertion.
+
+        assert self.satisfied(a, b, c)
+
+        if self.fixity is Fixity.INFIX:
+            return [self.klasse(b.opstr, a, c)], -1  # type: ignore
+        elif self.fixity is Fixity.PREFIX:
+            return [a, self.klasse(b.opstr, c)], 0  # type: ignore
+        elif self.fixity is Fixity.POSTFIX:
+            return [self.klasse(b.opstr, a), c], 0  # type: ignore
+
+
 class OpExpr(NonTerminalExpr):
-    def __init__(self, opstr: str, left: Expr, right: Expr) -> None:
+    def __init__(self, opstr: Char, left: Expr, right: Expr) -> None:
         super().__init__([left, right])
         self.opstr = opstr
         self.left = left
@@ -301,13 +395,6 @@ class OpExpr(NonTerminalExpr):
         return self.left.roll_info() + self.right.roll_info()
 
     @staticmethod
-    def from_token(left: Expr, operator: Operator, right: Expr) -> Expr:
-        if operator.token == KeepExpr.CHAR:
-            return KeepExpr(left, right)
-        else:
-            return OpExpr(operator.token, left, right)
-
-    @staticmethod
     def get_operation(opstr) -> typing.Callable:
         return {
             "+": operator.add,
@@ -318,10 +405,11 @@ class OpExpr(NonTerminalExpr):
 
 
 class KeepExpr(NonTerminalExpr):
-    CHAR = "k"
+    OPERATOR = "k"
 
-    def __init__(self, roll, keep) -> None:
+    def __init__(self, opstr, roll, keep) -> None:
         assert isinstance(roll, RollExpr)
+        assert opstr == KeepExpr.OPERATOR
 
         super().__init__([roll, keep])
 
@@ -330,36 +418,32 @@ class KeepExpr(NonTerminalExpr):
 
     def __repr__(self) -> str:
         return (
-            f"{type(self).__name__}<{repr(self.roll)}{KeepExpr.CHAR}"
+            f"{type(self).__name__}<{repr(self.roll)}{KeepExpr.OPERATOR}"
             f"{repr(self.keep)}>"
         )
 
     def __str__(self) -> str:
-        return f"{self.roll}{KeepExpr.CHAR}{self.keep}"
+        return f"{self.roll}{KeepExpr.OPERATOR}{self.keep}"
 
     @property
     def value(self) -> Number:
         return sum(heapq.nlargest(int(self.keep.value), self.roll.rolls))
 
 
-class SuperExpr(NonTerminalExpr):
-    def __init__(self, exprs: typing.List[Expr]):
-        super().__init__(exprs)
+# List of OpExprSpecifications to describe different operators.
+OPERATOR_SPECIFICATIONS: typing.List[OpExprSpecification] = []
 
-    def __repr__(self):
-        return (
-            type(self).__name__
-            + "<"
-            + " + ".join([f"({repr(expr)})" for expr in self.exprs])
-            + ">"
-        )
-
-    def __str__(self):
-        return " + ".join([f"({expr})" for expr in self.exprs])
-
-    @property
-    def value(self) -> Number:
-        return sum(expr.value for expr in self.exprs)
+OPERATOR_SPECIFICATIONS.extend(
+    [
+        OpExprSpecification(o, p, Fixity.INFIX, [Expr, Expr], OpExpr)
+        for (o, p) in [("*", 2), ("/", 2), ("+", 3), ("-", 3)]
+    ]
+)
+OPERATOR_SPECIFICATIONS.append(
+    OpExprSpecification(
+        KeepExpr.OPERATOR, 1, Fixity.INFIX, [RollExpr, Expr], KeepExpr
+    )
+)
 
 
 def consume(c: str, current_token: typing.Optional[Token]) -> TokenPair:
@@ -382,6 +466,20 @@ def tokenize(string: str):
         tokens.append(current_token)
 
     return tokens
+
+
+def either_side(i, l):
+    if i == 0:
+        a = None
+    else:
+        a = l[i - 1]
+
+    if i == len(l) - 1:
+        c = None
+    else:
+        c = l[i + 1]
+
+    return a, l[i], c
 
 
 def parse_tokens(tokens: typing.List[Token]):
@@ -407,31 +505,30 @@ def parse_tokens(tokens: typing.List[Token]):
         else:
             raise ValueError(f"Can't handle token of type: {type(token)}")
 
+    # Left operand, operator and right operand variables used while scanning
+    # through expression list.
+    a = b = c = None
+
     # Collapse operators with their operands, in order of precedence
     p = 1
-    while p <= Operator.MAX_PRECEDENCE:
-        i = 1
-        while i < len(exprs) - 1:
-            left, op, right = exprs[i - 1 : i + 2]
-            if isinstance(op, Operator) and op.precedence == p:
-                try:
-                    assert isinstance(left, Expr)
-                    assert isinstance(right, Expr)
-
+    while p <= OpExprSpecification.MAX_PRECEDENCE:
+        i = 0
+        while i < len(exprs):
+            a, b, c = either_side(i, exprs)
+            for spec in OPERATOR_SPECIFICATIONS:
+                if spec.precedence == p and spec.satisfied(a, b, c):
+                    collapsed, index_delta = spec.instantiate(a, b, c)
                     exprs = [
                         *exprs[: i - 1],
-                        OpExpr.from_token(left, op, right),
+                        *collapsed,
                         *exprs[i + 2 :],
                     ]
-                except AssertionError:
-                    raise ValueError(
-                        f"Invalid operands for {op.token}: {left} and {right}."
-                    )
-
-                i -= 1
+                    i += index_delta
+                    break
             i += 1
         p += 1
 
+    # remove the Nones added as padding
     return exprs
 
 
@@ -439,4 +536,4 @@ def parse(string: str):
     return parse_tokens(tokenize(string))
 
 
-print(parse("2d12 k3+4*(3 / 2) 2d4")[1].roll_info())
+print(parse("2d12 k3+4*(3 / 2) 2d4")[0])
