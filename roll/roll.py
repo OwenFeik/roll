@@ -60,7 +60,7 @@ class TerminalToken(Token):
 
 
 class IntegerToken(TerminalToken):
-    def __init__(self, token=""):
+    def __init__(self, token):
         super().__init__(token=token)
         assert not token or token.isnumeric()
 
@@ -133,22 +133,26 @@ class RollToken(TerminalToken):
 class NonTerminalToken(Token):
     @staticmethod
     def from_char(c: Char) -> typing.Optional[Token]:
-        if c == "(":
+        if c == OpenExprToken.CHARACTER:
             return OpenExprToken()
-        elif c == ")":
+        elif c == CloseExprToken.CHARACTER:
             return CloseExprToken()
         else:
             return OperatorToken.from_char(c)
 
 
 class OpenExprToken(NonTerminalToken):
+    CHARACTER = "("
+
     def __init__(self):
-        super().__init__(token="(")
+        super().__init__(token=OpenExprToken.CHARACTER)
 
 
 class CloseExprToken(NonTerminalToken):
+    CHARACTER = ")"
+
     def __init__(self):
-        super().__init__(token=")")
+        super().__init__(token=CloseExprToken.CHARACTER)
 
 
 class OperatorToken(NonTerminalToken):
@@ -198,6 +202,16 @@ class Expr:
 
     def roll_info(self) -> typing.List[RollInfo]:
         return []
+
+    def reroll(self, n: int) -> typing.Tuple[typing.List[int], Number]:
+        # note: this uses a reference to some sub expressions rolls to reroll.
+        # see comment in RollExpr.reroll_info for detail.
+
+        info = self.roll_info()
+        if not info:
+            raise ValueError("Can't reroll an expression with no rolls.")
+
+        return RollExpr.reroll_info(info[0], n)
 
     def clone(self) -> "Expr":
         raise NotImplementedError()
@@ -286,12 +300,26 @@ class RollExpr(TerminalExpr):
         for r in heapq.nsmallest(n, self.rolls):
             self._rolls[  # type: ignore
                 self._rolls.index(r)  # type: ignore
-            ] = random.randint(1, self.die)
+            ] = random.randint(1, self.size)
 
-        return self._rolls, self.calculate_total()  # type: ignore
+        return self._rolls, self.value  # type: ignore
 
     def clone(self) -> "RollExpr":
         return RollExpr(self.qty, self.size)
+
+    @staticmethod
+    def reroll_info(
+        info: RollInfo, n
+    ) -> typing.Tuple[typing.List[int], Number]:
+        # This is a little hack to allow expressions to reroll RollExprs from
+        # anywhere. It works because rolls from info is a reference to the rolls
+        # of the original roll, so by creating a new equivalent roll using these
+        # rolls and rerolling, we're actually rerolling the original dice.
+
+        roll_string, rolls = info
+        roll = RollExpr.from_token(RollToken(roll_string))
+        roll._rolls = rolls
+        return roll.reroll(n)
 
     @staticmethod
     def from_token(token: RollToken):
