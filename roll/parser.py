@@ -42,22 +42,24 @@ class Token:
 
     @staticmethod
     def from_char(c: Char) -> typing.Optional["Token"]:
-        if c == " ":
+        if c.isspace():
             return None
         elif c.isnumeric():
-            return Integer(c)
+            return IntegerToken(c)
         elif c == ".":
-            return Decimal(c)
+            return DecimalToken(c)
+        elif c == "d":
+            return RollToken(c)
         else:
-            return NonTerminal.from_char(c)
+            return NonTerminalToken.from_char(c)
 
 
-class Terminal(Token):
+class TerminalToken(Token):
     def value(self) -> typing.Any:
         raise NotImplementedError()
 
 
-class Integer(Terminal):
+class IntegerToken(TerminalToken):
     def __init__(self, token=""):
         super().__init__(token=token)
         assert not token or token.isnumeric()
@@ -67,9 +69,9 @@ class Integer(Terminal):
             self.token += c
             return None, self
         elif c == ".":
-            return None, Decimal(self.token + c)
+            return None, DecimalToken(self.token + c)
         elif c == "d":
-            return None, Roll(self.token + c)
+            return None, RollToken(self.token + c)
         else:
             return self, Token.from_char(c)
 
@@ -77,7 +79,7 @@ class Integer(Terminal):
         return int(self.token)
 
 
-class Decimal(Terminal):
+class DecimalToken(TerminalToken):
     def __init__(self, token):
         super().__init__(token=token)
         whole, dot, decimal = token.partition(".")
@@ -96,23 +98,29 @@ class Decimal(Terminal):
         return float(self.token)
 
 
-class Roll(Terminal):
+class RollToken(TerminalToken):
     SEPERATOR = "d"
 
     def __init__(self, token):
         super().__init__(token=token)
-        qty, d, size = token.partition(Roll.SEPERATOR)
+        qty, d, size = token.partition(RollToken.SEPERATOR)
         assert not qty or qty.isnumeric()
         assert d == "d"
         assert not size or size.isnumeric()
 
     @property
     def qty(self):
-        return int(self.token.partition(Roll.SEPERATOR)[0])
+        qty = self.token.partition(RollToken.SEPERATOR)[0]
+
+        if qty:
+            return int(qty)
+        else:
+            # d8 implicity means 1d8
+            return 1
 
     @property
     def size(self):
-        return int(self.token.partition(Roll.SEPERATOR)[2])
+        return int(self.token.partition(RollToken.SEPERATOR)[2])
 
     def consume(self, c: Char) -> TokenPair:
         if c.isnumeric():
@@ -122,28 +130,28 @@ class Roll(Terminal):
             return self, Token.from_char(c)
 
 
-class NonTerminal(Token):
+class NonTerminalToken(Token):
     @staticmethod
     def from_char(c: Char) -> typing.Optional[Token]:
         if c == "(":
-            return OpenExpr()
+            return OpenExprToken()
         elif c == ")":
-            return CloseExpr()
+            return CloseExprToken()
         else:
-            return Operator.from_char(c)
+            return OperatorToken.from_char(c)
 
 
-class OpenExpr(NonTerminal):
+class OpenExprToken(NonTerminalToken):
     def __init__(self):
         super().__init__(token="(")
 
 
-class CloseExpr(NonTerminal):
+class CloseExprToken(NonTerminalToken):
     def __init__(self):
         super().__init__(token=")")
 
 
-class Operator(NonTerminal):
+class OperatorToken(NonTerminalToken):
     def __init__(self, token):
         super().__init__(token=token)
 
@@ -154,7 +162,7 @@ class Operator(NonTerminal):
     @staticmethod
     def from_char(c: Char) -> typing.Optional[Token]:
         if c in "+-*/^k":
-            return Operator(c)
+            return OperatorToken(c)
         else:
             raise ValueError(f"Invalid character: {c}")
 
@@ -177,8 +185,22 @@ class Expr:
             return int(value)
         return round(value, 2)
 
+    def expr_str(self):
+        return ""
+
+    def roll_str(self) -> str:
+        return ", ".join(
+            [str(n) for _, rolls in self.roll_info() for n in rolls]
+        )
+
+    def has_rolls(self):
+        return bool(len(self.roll_info()))
+
     def roll_info(self) -> typing.List[RollInfo]:
         return []
+
+    def clone(self) -> "Expr":
+        raise NotImplementedError()
 
 
 class TerminalExpr(Expr):
@@ -202,6 +224,12 @@ class ConstExpr(TerminalExpr):
     def value(self) -> Number:
         return self._value
 
+    def expr_str(self):
+        return str(self.value)
+
+    def clone(self) -> "ConstExpr":
+        return ConstExpr(self.value)
+
 
 class RollExpr(TerminalExpr):
     MAX_QTY = 1000
@@ -224,7 +252,7 @@ class RollExpr(TerminalExpr):
         )
 
     def __str__(self) -> str:
-        return f"{self.qty}{Roll.SEPERATOR}{self.size}"
+        return f"{self.qty}{RollToken.SEPERATOR}{self.size}"
 
     @property
     def rolls(self) -> typing.List[int]:
@@ -237,6 +265,16 @@ class RollExpr(TerminalExpr):
     @property
     def value(self) -> Number:
         return sum(self.rolls)
+
+    def expr_str(self, summed=True):
+        if self.qty > 1:
+            string = "(" + ", ".join(str(r) for r in self.rolls) + ")"
+            if summed:
+                return "sum" + string
+            else:
+                return string
+        else:
+            return str(self.rolls[0])
 
     def roll_info(self) -> typing.List[RollInfo]:
         return [(str(self), self.rolls)]
@@ -252,8 +290,11 @@ class RollExpr(TerminalExpr):
 
         return self._rolls, self.calculate_total()  # type: ignore
 
+    def clone(self) -> "RollExpr":
+        return RollExpr(self.qty, self.size)
+
     @staticmethod
-    def from_token(token: Roll):
+    def from_token(token: RollToken):
         return RollExpr(token.qty, token.size)
 
 
@@ -281,16 +322,22 @@ class SuperExpr(NonTerminalExpr):
         return (
             type(self).__name__
             + "<"
-            + " + ".join([f"({repr(expr)})" for expr in self.exprs])
+            + " + ".join(f"({repr(expr)})" for expr in self.exprs)
             + ">"
         )
 
     def __str__(self):
-        return " + ".join([f"({expr})" for expr in self.exprs])
+        return " + ".join(f"({expr})" for expr in self.exprs)
 
     @property
     def value(self) -> Number:
         return sum(expr.value for expr in self.exprs)
+
+    def expr_str(self):
+        return "(" + " + ".join(expr.expr_str() for expr in self.exprs) + ")"
+
+    def clone(self) -> "SuperExpr":
+        return SuperExpr([expr.clone() for expr in self.exprs])
 
 
 class Fixity(enum.Enum):
@@ -330,11 +377,11 @@ class OpExprSpecification:
 
     def satisfied(
         self,
-        a: typing.Union[Expr, Operator, None],
-        b: typing.Union[Expr, Operator, None],
-        c: typing.Union[Expr, Operator, None],
+        a: typing.Union[Expr, OperatorToken, None],
+        b: typing.Union[Expr, OperatorToken, None],
+        c: typing.Union[Expr, OperatorToken, None],
     ) -> bool:
-        if not isinstance(b, Operator) or b.opstr != self.opstr:
+        if not isinstance(b, OperatorToken) or b.opstr != self.opstr:
             return False
 
         if self.fixity is Fixity.INFIX:
@@ -346,9 +393,9 @@ class OpExprSpecification:
 
     def instantiate(
         self,
-        a: typing.Union[Expr, Operator, None],
-        b: typing.Union[Expr, Operator, None],
-        c: typing.Union[Expr, Operator, None],
+        a: typing.Union[Expr, OperatorToken, None],
+        b: typing.Union[Expr, OperatorToken, None],
+        c: typing.Union[Expr, OperatorToken, None],
     ) -> typing.Tuple[typing.List[Expr], int]:
         # The typing ignores in this function are to suppress type issues which
         # are handled by the below assertion.
@@ -370,6 +417,8 @@ class OpExpr(NonTerminalExpr):
         self.left = left
         self.right = right
 
+        # some subclasses don't use this behaviour, so I just handle the
+        # KeyError. A little inelegant but w/e
         try:
             self.operation: typing.Union[
                 typing.Callable, None
@@ -398,8 +447,14 @@ class OpExpr(NonTerminalExpr):
         assert self.operation is not None
         return self.operation(self.left.value, self.right.value)
 
+    def expr_str(self):
+        return f"{self.left.expr_str()} {self.opstr} {self.right.expr_str()}"
+
     def roll_info(self) -> typing.List[RollInfo]:
         return self.left.roll_info() + self.right.roll_info()
+
+    def clone(self) -> "OpExpr":
+        return OpExpr(self.opstr, self.left.clone(), self.right.clone())
 
     @staticmethod
     def get_operation(opstr) -> typing.Callable:
@@ -430,16 +485,24 @@ class KeepExpr(OpExpr):
         return f"{self.roll}{KeepExpr.OPERATOR}{self.keep}"
 
     @property
-    def roll(self):
-        return self.left
+    def roll(self) -> RollExpr:
+        # guaranteed to be RollExpr by assertion in __init__, but mypy doesn't
+        # know this.
+        return self.left  # type: ignore
 
     @property
-    def keep(self):
+    def keep(self) -> Expr:
         return self.right
 
     @property
     def value(self) -> Number:
         return sum(heapq.nlargest(int(self.keep.value), self.roll.rolls))
+
+    def expr_str(self):
+        return f"{self.roll.expr_str(False)}k{self.keep.expr_str()}"
+
+    def clone(self) -> "KeepExpr":
+        return KeepExpr(self.roll.clone(), self.keep.clone())
 
 
 class UnaryNegateExpr(NonTerminalExpr):
@@ -460,10 +523,22 @@ class UnaryNegateExpr(NonTerminalExpr):
     def value(self) -> Number:
         return -self.expr.value
 
+    def expr_str(self):
+        return f"-{self.expr.expr_str()}"
+
+    def clone(self) -> "UnaryNegateExpr":
+        return UnaryNegateExpr(self.expr.clone())
+
 
 # List of OpExprSpecifications to describe different operators.
 OPERATOR_SPECIFICATIONS: typing.List[OpExprSpecification] = []
 
+# Current precedence:
+# 1: k
+# 2: ^
+# 3: *, /
+# 4: +, -
+# 5: - (unary)
 OPERATOR_SPECIFICATIONS.extend(
     [
         OpExprSpecification(
@@ -485,6 +560,8 @@ OPERATOR_SPECIFICATIONS.append(
 
 
 def consume(c: str, current_token: typing.Optional[Token]) -> TokenPair:
+    """Consume a character, returning a finished and current token."""
+
     if current_token:
         return current_token.consume(c)
     else:
@@ -492,6 +569,8 @@ def consume(c: str, current_token: typing.Optional[Token]) -> TokenPair:
 
 
 def tokenize(string: str):
+    """Parse a string into valid tokens."""
+
     tokens: typing.List[Token] = []
     current_token: typing.Optional[Token] = None
 
@@ -507,6 +586,8 @@ def tokenize(string: str):
 
 
 def either_side(i, l):
+    """Returns a None padded tuple of the three elements around index i."""
+
     if i == 0:
         a = None
     else:
@@ -521,31 +602,54 @@ def either_side(i, l):
 
 
 def filter_nones(l):
+    """Remove None elements of list l."""
+
     return [e for e in l if e is not None]
 
 
-def parse_tokens(tokens: typing.List[Token]):
-    exprs: typing.List[typing.Union[Expr, Operator]] = []
+def replace_around(i, l, r, f_nones=True):
+    """Replace the three elements centered at i with r."""
+
+    if f_nones:
+        r = filter_nones(r)
+
+    return l[: max(i - 1, 0)] + r + l[i + 2 :]
+
+
+def parse_non_operators(
+    tokens: typing.List[Token],
+) -> typing.List[typing.Union[Expr, OperatorToken]]:
+    """Parse a list of Tokens into Exprs, leaving OperatorTokens untouched."""
+
+    exprs: typing.List[typing.Union[Expr, OperatorToken]] = []
     depth = 0
     current_expr: typing.List[Token] = []
     for token in tokens:
-        if isinstance(token, OpenExpr):
+        if isinstance(token, OpenExprToken):
             depth += 1
-        elif isinstance(token, CloseExpr):
+        elif isinstance(token, CloseExprToken):
             depth -= 1
             if depth == 0:
                 exprs.append(SuperExpr(parse_tokens(current_expr)))
                 current_expr = []
         elif depth:
             current_expr.append(token)
-        elif isinstance(token, Roll):
+        elif isinstance(token, RollToken):
             exprs.append(RollExpr.from_token(token))
-        elif isinstance(token, Terminal):
+        elif isinstance(token, TerminalToken):
             exprs.append(ConstExpr(token.value()))
-        elif isinstance(token, Operator):
+        elif isinstance(token, OperatorToken):
             exprs.append(token)
         else:
             raise ValueError(f"Can't handle token of type: {type(token)}")
+
+    return exprs
+
+
+def parse_operators(
+    exprs: typing.List[typing.Union[Expr, OperatorToken]]
+) -> typing.List[Expr]:
+    """Attempt to associate OperatorTokens with their operands."""
 
     # Left operand, operator and right operand variables used while scanning
     # through expression list.
@@ -560,11 +664,7 @@ def parse_tokens(tokens: typing.List[Token]):
             for spec in OPERATOR_SPECIFICATIONS:
                 if spec.precedence == p and spec.satisfied(a, b, c):
                     collapsed, index_delta = spec.instantiate(a, b, c)
-                    exprs = [
-                        *exprs[: max(i - 1, 0)],
-                        *filter_nones(collapsed),
-                        *exprs[i + 2 :],
-                    ]
+                    exprs = replace_around(i, exprs, collapsed)
                     i += index_delta
                     break
             i += 1
@@ -574,9 +674,101 @@ def parse_tokens(tokens: typing.List[Token]):
         if not isinstance(expr, Expr):
             raise ValueError(f"Invalid operands for operator {expr.opstr}.")
 
-    # remove the Nones added as padding
+    # mypy doesn't know that the union type is restricted by the above for loop,
+    # so it flags this return
+    return exprs  # type: ignore
+
+
+# in an expression like 6 4d6k3, the const is 6 and indicates that the following
+# expression should be repeated 6 times. MAX_CONST is the maximum value such a
+# constant can take.
+MAX_CONST = 10
+
+# The const rule is that <const> <expr> becomes <const> instances of <expr> if
+# expr contains any rolls.
+def apply_const_rule(exprs: typing.List[Expr]):
+    """Replace <const> <expr> with <const> instances of <expr>."""
+
+    i = 0
+    while i < len(exprs):
+        a, b, c = either_side(i, exprs)
+
+        if isinstance(b, ConstExpr) and type(b.value) is int and c.has_rolls():
+            if b.value > MAX_CONST:
+                raise ValueError(
+                    f"Can't repeat an expression more than {MAX_CONST} times."
+                )
+
+            # replace the constant and expr with constant.value of the expr
+            exprs = replace_around(
+                i, exprs, [a] + [c.clone() for _ in range(b.value)]
+            )
+
+            # move the pointer along to the end of the new elements
+            i += b.value - 1
+        i += 1
+
     return exprs
 
 
-def parse(string: str):
+def parse_tokens(tokens: typing.List[Token]) -> typing.List[Expr]:
+    """Parse a string of roll expressions."""
+
+    return apply_const_rule(parse_operators(parse_non_operators(tokens)))
+
+
+def parse(string: str) -> typing.List[Expr]:
     return parse_tokens(tokenize(string))
+
+
+def get_rolls(string: str, max_qty: int = None) -> typing.List[Expr]:
+    """Parse the input string, returning up to max_qty rolls."""
+
+    return parse(string)[:max_qty]
+
+
+def calculate_total(exprs: typing.List[Expr]) -> Number:
+    """Calculate to total result of a list of Expr objects."""
+
+    return sum(expr.value for expr in exprs)
+
+
+def get_result(string: str) -> Number:
+    """Calculate and return the total of rolls parsed from a string."""
+
+    return calculate_total(get_rolls(string))
+
+
+def pad_to_longest(strings: typing.List[str]) -> typing.List[str]:
+    """Space pad a list of strings to the same length."""
+
+    length = max(len(s) for s in strings)
+    return [s.ljust(length) for s in strings]
+
+
+def rolls_string(rolls: typing.List[Expr], sep="\t") -> str:
+    """Return a descriptive string for a list of Roll objects."""
+
+    if not rolls:
+        return ""
+    elif len(rolls) == 1:
+        roll = rolls[0]
+        return f"{roll}{sep}{roll.roll_str()}{sep}Total: {roll.value}"
+
+    desc_strs = pad_to_longest([str(expr) for expr in rolls])
+    expr_strs = pad_to_longest([expr.expr_str() for expr in rolls])
+    roll_strs = pad_to_longest([expr.roll_str() for expr in rolls])
+
+    string = ""
+    for desc_str, expr_str, roll_str, roll in zip(
+        desc_strs, expr_strs, roll_strs, rolls
+    ):
+        if len(roll.roll_info()) > 1:
+            value_str = expr_str
+        else:
+            value_str = roll_str
+
+        string += f"{desc_str}{sep}{value_str}{sep}Total: {roll.value}\n"
+
+    string += f"Grand Total: {calculate_total(rolls)}"
+    return string

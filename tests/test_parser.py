@@ -8,17 +8,17 @@ class TestParser(unittest.TestCase):
         self.assertEqual(
             tokenize("1 / 2.72 - (25 + 38) * 3.14"),
             [
-                Integer("1"),
-                Operator("/"),
-                Decimal("2.72"),
-                Operator("-"),
-                OpenExpr(),
-                Integer("25"),
-                Operator("+"),
-                Integer("38"),
-                CloseExpr(),
-                Operator("*"),
-                Decimal("3.14"),
+                IntegerToken("1"),
+                OperatorToken("/"),
+                DecimalToken("2.72"),
+                OperatorToken("-"),
+                OpenExprToken(),
+                IntegerToken("25"),
+                OperatorToken("+"),
+                IntegerToken("38"),
+                CloseExprToken(),
+                OperatorToken("*"),
+                DecimalToken("3.14"),
             ],
         )
 
@@ -26,12 +26,12 @@ class TestParser(unittest.TestCase):
         self.assertEqual(
             tokenize("2 2d12 * 3 + 2"),
             [
-                Integer("2"),
-                Roll("2d12"),
-                Operator("*"),
-                Integer("3"),
-                Operator("+"),
-                Integer("2"),
+                IntegerToken("2"),
+                RollToken("2d12"),
+                OperatorToken("*"),
+                IntegerToken("3"),
+                OperatorToken("+"),
+                IntegerToken("2"),
             ],
         )
 
@@ -61,11 +61,28 @@ class TestParser(unittest.TestCase):
             parse("10d1 + 4 ^ 2 * 3 / 2")[0].value, 10 + 4 ** 2 * 3 / 2
         )
 
-    def test_invalid(self) -> None:
+    def test_const_rule(self) -> None:
+        self.assertEqual(parse("2 d4"), [RollExpr(1, 4)] * 2)
+
+    def test_missing_operand(self) -> None:
+        self.assertRaises(ValueError, parse, "+ 2")
+
+    def test_operator_operand(self) -> None:
         self.assertRaises(ValueError, parse, "- + 2")
 
     def test_too_many_die(self) -> None:
         self.assertRaises(ValueError, parse, "1001d20")
+
+    def test_rolls_string(self) -> None:
+        self.assertEqual(
+            rolls_string(get_rolls("4d1")), "4d1\t1, 1, 1, 1\tTotal: 4"
+        )
+
+    def test_multiple_rolls_string(self) -> None:
+        self.assertEqual(
+            rolls_string(get_rolls("2 2d1")),
+            "2d1\t1, 1\tTotal: 2\n2d1\t1, 1\tTotal: 2\nGrand Total: 4",
+        )
 
 
 if __name__ == "__main__":
