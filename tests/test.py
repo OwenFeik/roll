@@ -39,7 +39,9 @@ class TestParser(unittest.TestCase):
         self.assertEqual(
             parse("-2d12 k3+4*(3 / 2) 2d4"),
             [
-                UnaryNegateExpr(
+                UnaryExpr(
+                    "-",
+                    Fixity.PREFIX,
                     OpExpr(
                         "+",
                         KeepExpr(RollExpr(2, 12), ConstExpr(3)),
@@ -50,7 +52,7 @@ class TestParser(unittest.TestCase):
                                 [OpExpr("/", ConstExpr(3), ConstExpr(2))]
                             ),
                         ),
-                    )
+                    ),
                 ),
                 RollExpr(2, 4),
             ],
@@ -64,6 +66,18 @@ class TestParser(unittest.TestCase):
     def test_const_rule(self) -> None:
         self.assertEqual(parse("2 d4"), [RollExpr(1, 4)] * 2)
 
+    def test_advantage(self) -> None:
+        exprs = parse("d20a")
+        self.assertEqual(len(exprs), 1)
+        expr = exprs[0]
+        self.assertEqual(expr.value, max(expr.roll_info()[0][1]))
+
+    def test_disadvantage(self) -> None:
+        exprs = parse("d20d")
+        self.assertEqual(len(exprs), 1)
+        expr = exprs[0]
+        self.assertEqual(expr.value, min(expr.roll_info()[0][1]))
+
     def test_missing_operand(self) -> None:
         self.assertRaises(ValueError, parse, "+ 2")
 
@@ -75,13 +89,15 @@ class TestParser(unittest.TestCase):
 
     def test_rolls_string(self) -> None:
         self.assertEqual(
-            rolls_string(get_rolls("4d1")), "4d1\t1, 1, 1, 1\tTotal: 4"
+            rolls_string(get_rolls("4d1")), "4d1\tRolls: 1, 1, 1, 1\tTotal: 4"
         )
 
     def test_multiple_rolls_string(self) -> None:
         self.assertEqual(
             rolls_string(get_rolls("2 2d1")),
-            "2d1\t1, 1\tTotal: 2\n2d1\t1, 1\tTotal: 2\nGrand Total: 4",
+            "2d1\tRolls: 1, 1\tTotal: 2\n"
+            "2d1\tRolls: 1, 1\tTotal: 2\n"
+            "Grand Total: 4",
         )
 
 

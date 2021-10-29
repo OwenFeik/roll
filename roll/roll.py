@@ -129,6 +129,9 @@ class RollToken(TerminalToken):
         if c.isnumeric():
             self.token += c
             return None, self
+        elif self.token == "d":
+            # This was actually a disadvantage operator
+            return OperatorToken(self.token), Token.from_char(c)
         else:
             return self, Token.from_char(c)
 
@@ -159,6 +162,8 @@ class CloseExprToken(NonTerminalToken):
 
 
 class OperatorToken(NonTerminalToken):
+    OPERATORS = "+-*/^kad"
+
     def __init__(self, token):
         super().__init__(token=token)
 
@@ -168,7 +173,7 @@ class OperatorToken(NonTerminalToken):
 
     @staticmethod
     def from_char(c: Char) -> typing.Optional[Token]:
-        if c in "+-*/^k":
+        if c in OperatorToken.OPERATORS:
             return OperatorToken(c)
         else:
             raise ValueError(f"Invalid character: {c}")
@@ -196,8 +201,10 @@ class Expr:
         return ""
 
     def roll_str(self) -> str:
-        return ", ".join(
-            [str(n) for _, rolls in self.roll_info() for n in rolls]
+        rolls = [str(n) for _, rolls in self.roll_info() for n in rolls]
+
+        return (
+            "Roll" + ("s" if len(rolls) > 1 else "") + ": " + ", ".join(rolls)
         )
 
     def full_str(self, sep=SEP):
@@ -389,7 +396,7 @@ class OpExprSpecification:
 
     def __init__(
         self,
-        opstr: Char,
+        opstr: str,
         precedence: int,
         fixity: Fixity,
         arguments: typing.List[typing.Type[Expr]],
@@ -419,7 +426,7 @@ class OpExprSpecification:
         b: typing.Union[Expr, OperatorToken, None],
         c: typing.Union[Expr, OperatorToken, None],
     ) -> bool:
-        if not isinstance(b, OperatorToken) or b.opstr != self.opstr:
+        if not isinstance(b, OperatorToken) or self.opstr != b.opstr:
             return False
 
         if self.fixity is Fixity.INFIX:
@@ -543,36 +550,91 @@ class KeepExpr(OpExpr):
         return KeepExpr(self.roll.clone(), self.keep.clone())
 
 
-class UnaryNegateExpr(NonTerminalExpr):
-    OPERATOR = "-"
-
-    def __init__(self, expr: Expr) -> None:
+class UnaryExpr(NonTerminalExpr):
+    def __init__(self, opstr: str, fixity: Fixity, expr: Expr) -> None:
         super().__init__([expr])
 
+        self.opstr = opstr
+        self.fixity = fixity
         self.expr = expr
 
-    def __repr__(self):
-        return f"{type(self).__name__}<{self.OPERATOR}{repr(self.expr)}>"
+        self.operation = UnaryExpr.get_operation(opstr)
 
-    def __str__(self):
-        return f"{self.OPERATOR}{self.expr}"
+    def __eq__(self, o: object) -> bool:
+        return (
+            isinstance(o, UnaryExpr)
+            and o.opstr == self.opstr
+            and o.fixity is self.fixity
+            and o.expr == self.expr
+        )
+
+    def __repr__(self) -> str:
+        name = type(self).__name__
+        if self.fixity == Fixity.PREFIX:
+            return f"{name}<{self.opstr}{repr(self.expr)}>"
+        else:
+            return f"{name}<{repr(self.expr)}{self.opstr}>"
+
+    def __str__(self) -> str:
+        if self.fixity == Fixity.PREFIX:
+            return f"{self.opstr}{self.expr}"
+        else:
+            return f"{self.expr}{self.opstr}"
 
     @property
-    def value(self) -> Number:
-        return -self.expr.value
+    def value(self):
+        return self.operation(self.expr)
+
+    def clone(self) -> "UnaryExpr":
+        return UnaryExpr(self.opstr, self.fixity, self.expr.clone())
+
+    @staticmethod
+    def get_operation(opstr) -> typing.Callable:
+        return {
+            "-": lambda expr: operator.neg(expr),
+            "a": lambda roll: max(roll.rolls),
+            "d": lambda roll: min(roll.rolls),
+        }[opstr]
+
+
+class RollUnaryExpr(UnaryExpr):
+    def __init__(self, opstr: str, expr: Expr) -> None:
+        super().__init__(opstr, Fixity.POSTFIX, expr)
+
+        assert isinstance(expr, RollExpr)
+        self.roll = expr
+
+        # RollUnaryExprs are adv and disadv and both implicity raise the number
+        # of die to at least 2.
+        if self.roll.qty < 2:
+            self.roll.qty = 2
+
+
+class AdvExpr(RollUnaryExpr):
+    OPERATOR = "a"
+
+    def __init__(self, expr: Expr) -> None:
+        super().__init__(AdvExpr.OPERATOR, expr)
 
     def expr_str(self):
-        return f"-{self.expr.expr_str()}"
+        return "max" + self.roll.expr_str(False)
 
-    def clone(self) -> "UnaryNegateExpr":
-        return UnaryNegateExpr(self.expr.clone())
+
+class DisadvExpr(RollUnaryExpr):
+    OPERATOR = "d"
+
+    def __init__(self, expr: Expr) -> None:
+        super().__init__(DisadvExpr.OPERATOR, expr)
+
+    def expr_str(self):
+        return "min" + self.roll.expr_str(False)
 
 
 # List of OpExprSpecifications to describe different operators.
 OPERATOR_SPECIFICATIONS: typing.List[OpExprSpecification] = []
 
 # Current precedence:
-# 1: k
+# 1: k, a, d
 # 2: ^
 # 3: *, /
 # 4: +, -
@@ -592,8 +654,27 @@ OPERATOR_SPECIFICATIONS.append(
 )
 OPERATOR_SPECIFICATIONS.append(
     OpExprSpecification(
-        UnaryNegateExpr.OPERATOR, 5, Fixity.PREFIX, [Expr], UnaryNegateExpr
+        "-",
+        5,
+        Fixity.PREFIX,
+        [Expr],
+        functools.partial(UnaryExpr, "-", Fixity.PREFIX),
     )
+)
+OPERATOR_SPECIFICATIONS.extend(
+    [
+        OpExprSpecification(
+            o,
+            1,
+            Fixity.POSTFIX,
+            [RollExpr],
+            c,
+        )
+        for (o, c) in [
+            (AdvExpr.OPERATOR, AdvExpr),
+            (DisadvExpr.OPERATOR, DisadvExpr),
+        ]
+    ]
 )
 
 
@@ -618,7 +699,10 @@ def tokenize(string: str):
             tokens.append(finished_token)
 
     if current_token:
-        tokens.append(current_token)
+        finished_token, _ = current_token.consume(" ")
+
+        if finished_token:
+            tokens.append(finished_token)
 
     return tokens
 
@@ -732,18 +816,25 @@ def apply_const_rule(exprs: typing.List[Expr]):
         a, b, c = either_side(i, exprs)
 
         if isinstance(b, ConstExpr) and type(b.total) is int and c.has_rolls():
-            if b.total > MAX_CONST:
+            n = b.total
+
+            # ignore type of n through this block because mypy doesn't like the
+            # assert here for some reason.
+
+            assert type(n) is int
+
+            if n > MAX_CONST:
                 raise ValueError(
                     f"Can't repeat an expression more than {MAX_CONST} times."
                 )
 
             # replace the constant and expr with constant.total of the expr
             exprs = replace_around(
-                i, exprs, [a] + [c.clone() for _ in range(b.total)]
+                i, exprs, [a] + [c.clone() for _ in range(n)]  # type: ignore
             )
 
             # move the pointer along to the end of the new elements
-            i += b.total - 1
+            i += n - 1  # type: ignore
         i += 1
 
     return exprs
@@ -756,7 +847,7 @@ def parse_tokens(tokens: typing.List[Token]) -> typing.List[Expr]:
 
 
 def parse(string: str) -> typing.List[Expr]:
-    return parse_tokens(tokenize(string))
+    return parse_tokens(tokenize(string.lower()))
 
 
 def get_rolls(string: str, max_qty: int = None) -> typing.List[Expr]:
