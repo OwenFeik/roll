@@ -19,6 +19,9 @@ TokenPair = typing.Tuple[typing.Optional["Token"], typing.Optional["Token"]]
 # (roll_format, results)
 RollInfo = typing.Tuple[str, typing.List[int]]
 
+# Default seperator for output strings.
+SEP = "\t"
+
 
 class Token:
     def __init__(self, token=""):
@@ -176,14 +179,14 @@ class Expr:
         return f"{type(self).__name__}<{str(self)}>"
 
     def __str__(self):
-        return str(self.value)
+        return str(self.total)
 
     @property
     def value(self) -> Number:
         raise NotImplementedError()
 
     @property
-    def result(self) -> Number:
+    def total(self) -> Number:
         value = self.value
         if value // 1 == value:
             return int(value)
@@ -196,6 +199,13 @@ class Expr:
         return ", ".join(
             [str(n) for _, rolls in self.roll_info() for n in rolls]
         )
+
+    def full_str(self, sep=SEP):
+        if len(self.roll_info()) > 1:
+            value_str = self.expr_str()
+        else:
+            value_str = self.roll_str()
+        return f"{self}{sep}{value_str}{sep}Total: {self.total}"
 
     def has_rolls(self):
         return bool(len(self.roll_info()))
@@ -239,7 +249,7 @@ class ConstExpr(TerminalExpr):
         return self._value
 
     def expr_str(self):
-        return str(self.value)
+        return str(self.total)
 
     def clone(self) -> "ConstExpr":
         return ConstExpr(self.value)
@@ -302,7 +312,7 @@ class RollExpr(TerminalExpr):
                 self._rolls.index(r)  # type: ignore
             ] = random.randint(1, self.size)
 
-        return self._rolls, self.value  # type: ignore
+        return self._rolls, self.total  # type: ignore
 
     def clone(self) -> "RollExpr":
         return RollExpr(self.qty, self.size)
@@ -721,19 +731,19 @@ def apply_const_rule(exprs: typing.List[Expr]):
     while i < len(exprs):
         a, b, c = either_side(i, exprs)
 
-        if isinstance(b, ConstExpr) and type(b.value) is int and c.has_rolls():
-            if b.value > MAX_CONST:
+        if isinstance(b, ConstExpr) and type(b.total) is int and c.has_rolls():
+            if b.total > MAX_CONST:
                 raise ValueError(
                     f"Can't repeat an expression more than {MAX_CONST} times."
                 )
 
-            # replace the constant and expr with constant.value of the expr
+            # replace the constant and expr with constant.total of the expr
             exprs = replace_around(
-                i, exprs, [a] + [c.clone() for _ in range(b.value)]
+                i, exprs, [a] + [c.clone() for _ in range(b.total)]
             )
 
             # move the pointer along to the end of the new elements
-            i += b.value - 1
+            i += b.total - 1
         i += 1
 
     return exprs
@@ -758,7 +768,7 @@ def get_rolls(string: str, max_qty: int = None) -> typing.List[Expr]:
 def calculate_total(exprs: typing.List[Expr]) -> Number:
     """Calculate to total result of a list of Expr objects."""
 
-    return sum(expr.value for expr in exprs)
+    return sum(expr.total for expr in exprs)
 
 
 def get_result(string: str) -> Number:
@@ -774,14 +784,14 @@ def pad_to_longest(strings: typing.List[str]) -> typing.List[str]:
     return [s.ljust(length) for s in strings]
 
 
-def rolls_string(rolls: typing.List[Expr], sep="\t") -> str:
+def rolls_string(rolls: typing.List[Expr], sep=SEP) -> str:
     """Return a descriptive string for a list of Roll objects."""
 
     if not rolls:
         return ""
     elif len(rolls) == 1:
         roll = rolls[0]
-        return f"{roll}{sep}{roll.roll_str()}{sep}Total: {roll.value}"
+        return f"{roll}{sep}{roll.roll_str()}{sep}Total: {roll.total}"
 
     desc_strs = pad_to_longest([str(expr) for expr in rolls])
     expr_strs = pad_to_longest([expr.expr_str() for expr in rolls])
@@ -796,7 +806,7 @@ def rolls_string(rolls: typing.List[Expr], sep="\t") -> str:
         else:
             value_str = roll_str
 
-        string += f"{desc_str}{sep}{value_str}{sep}Total: {roll.value}\n"
+        string += f"{desc_str}{sep}{value_str}{sep}Total: {roll.total}\n"
 
     string += f"Grand Total: {calculate_total(rolls)}"
     return string
