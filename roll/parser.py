@@ -1,4 +1,5 @@
 import enum
+import functools
 import heapq
 import operator
 import random
@@ -152,7 +153,7 @@ class Operator(NonTerminal):
 
     @staticmethod
     def from_char(c: Char) -> typing.Optional[Token]:
-        if c in "+-*/k":
+        if c in "+-*/^k":
             return Operator(c)
         else:
             raise ValueError(f"Invalid character: {c}")
@@ -355,11 +356,11 @@ class OpExprSpecification:
         assert self.satisfied(a, b, c)
 
         if self.fixity is Fixity.INFIX:
-            return [self.klasse(b.opstr, a, c)], -1  # type: ignore
+            return [self.klasse(a, c)], -1  # type: ignore
         elif self.fixity is Fixity.PREFIX:
-            return [a, self.klasse(b.opstr, c)], 0  # type: ignore
+            return [a, self.klasse(c)], 0  # type: ignore
         elif self.fixity is Fixity.POSTFIX:
-            return [self.klasse(b.opstr, a), c], 0  # type: ignore
+            return [self.klasse(a), c], 0  # type: ignore
 
 
 class OpExpr(NonTerminalExpr):
@@ -369,7 +370,12 @@ class OpExpr(NonTerminalExpr):
         self.left = left
         self.right = right
 
-        self.operation = OpExpr.get_operation(opstr)
+        try:
+            self.operation: typing.Union[
+                typing.Callable, None
+            ] = OpExpr.get_operation(opstr)
+        except KeyError:
+            self.operation = None
 
     def __eq__(self, o: object) -> bool:
         return (
@@ -389,6 +395,7 @@ class OpExpr(NonTerminalExpr):
 
     @property
     def value(self) -> Number:
+        assert self.operation is not None
         return self.operation(self.left.value, self.right.value)
 
     def roll_info(self) -> typing.List[RollInfo]:
@@ -401,20 +408,17 @@ class OpExpr(NonTerminalExpr):
             "-": operator.sub,
             "*": operator.mul,
             "/": operator.truediv,
+            "^": operator.pow,
         }[opstr]
 
 
-class KeepExpr(NonTerminalExpr):
+class KeepExpr(OpExpr):
     OPERATOR = "k"
 
-    def __init__(self, opstr, roll, keep) -> None:
+    def __init__(self, roll, keep) -> None:
+        super().__init__(KeepExpr.OPERATOR, roll, keep)
+
         assert isinstance(roll, RollExpr)
-        assert opstr == KeepExpr.OPERATOR
-
-        super().__init__([roll, keep])
-
-        self.roll = roll
-        self.keep = keep
 
     def __repr__(self) -> str:
         return (
@@ -426,8 +430,35 @@ class KeepExpr(NonTerminalExpr):
         return f"{self.roll}{KeepExpr.OPERATOR}{self.keep}"
 
     @property
+    def roll(self):
+        return self.left
+
+    @property
+    def keep(self):
+        return self.right
+
+    @property
     def value(self) -> Number:
         return sum(heapq.nlargest(int(self.keep.value), self.roll.rolls))
+
+
+class UnaryNegateExpr(NonTerminalExpr):
+    OPERATOR = "-"
+
+    def __init__(self, expr: Expr) -> None:
+        super().__init__([expr])
+
+        self.expr = expr
+
+    def __repr__(self):
+        return f"{type(self).__name__}<{self.OPERATOR}{repr(self.expr)}>"
+
+    def __str__(self):
+        return f"{self.OPERATOR}{self.expr}"
+
+    @property
+    def value(self) -> Number:
+        return -self.expr.value
 
 
 # List of OpExprSpecifications to describe different operators.
@@ -435,13 +466,20 @@ OPERATOR_SPECIFICATIONS: typing.List[OpExprSpecification] = []
 
 OPERATOR_SPECIFICATIONS.extend(
     [
-        OpExprSpecification(o, p, Fixity.INFIX, [Expr, Expr], OpExpr)
-        for (o, p) in [("*", 2), ("/", 2), ("+", 3), ("-", 3)]
+        OpExprSpecification(
+            o, p, Fixity.INFIX, [Expr, Expr], functools.partial(OpExpr, o)
+        )
+        for (o, p) in [("^", 2), ("*", 3), ("/", 3), ("+", 4), ("-", 4)]
     ]
 )
 OPERATOR_SPECIFICATIONS.append(
     OpExprSpecification(
         KeepExpr.OPERATOR, 1, Fixity.INFIX, [RollExpr, Expr], KeepExpr
+    )
+)
+OPERATOR_SPECIFICATIONS.append(
+    OpExprSpecification(
+        UnaryNegateExpr.OPERATOR, 5, Fixity.PREFIX, [Expr], UnaryNegateExpr
     )
 )
 
@@ -482,6 +520,10 @@ def either_side(i, l):
     return a, l[i], c
 
 
+def filter_nones(l):
+    return [e for e in l if e is not None]
+
+
 def parse_tokens(tokens: typing.List[Token]):
     exprs: typing.List[typing.Union[Expr, Operator]] = []
     depth = 0
@@ -519,8 +561,8 @@ def parse_tokens(tokens: typing.List[Token]):
                 if spec.precedence == p and spec.satisfied(a, b, c):
                     collapsed, index_delta = spec.instantiate(a, b, c)
                     exprs = [
-                        *exprs[: i - 1],
-                        *collapsed,
+                        *exprs[: max(i - 1, 0)],
+                        *filter_nones(collapsed),
                         *exprs[i + 2 :],
                     ]
                     i += index_delta
@@ -528,12 +570,13 @@ def parse_tokens(tokens: typing.List[Token]):
             i += 1
         p += 1
 
+    for expr in exprs:
+        if not isinstance(expr, Expr):
+            raise ValueError(f"Invalid operands for operator {expr.opstr}.")
+
     # remove the Nones added as padding
     return exprs
 
 
 def parse(string: str):
     return parse_tokens(tokenize(string))
-
-
-print(parse("2d12 k3+4*(3 / 2) 2d4")[0])
