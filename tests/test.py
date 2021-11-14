@@ -84,8 +84,25 @@ class TestParser(unittest.TestCase):
     def test_operator_operand(self) -> None:
         self.assertRaises(ValueError, parse, "- + 2")
 
-    def test_too_many_die(self) -> None:
-        self.assertRaises(ValueError, parse, "1001d20")
+    def test_max_value(self) -> None:
+        self.assertEqual(
+            parse(f"{TerminalExpr.MAX_VALUE}"),
+            [ConstExpr(TerminalExpr.MAX_VALUE)],
+        )
+        self.assertRaises(ValueError, parse, f"{TerminalExpr.MAX_VALUE + 1}")
+
+    def test_max_roll_qty(self) -> None:
+        self.assertEqual(
+            parse(f"{RollExpr.MAX_QTY}d20"), [RollExpr(RollExpr.MAX_QTY, 20)]
+        )
+        self.assertRaises(ValueError, parse, f"{RollExpr.MAX_QTY + 1}d20")
+
+    def test_max_roll_size(self) -> None:
+        self.assertEqual(
+            parse(f"d{TerminalExpr.MAX_VALUE}"),
+            [RollExpr(1, TerminalExpr.MAX_VALUE)],
+        )
+        self.assertRaises(ValueError, parse, f"d{TerminalExpr.MAX_VALUE + 1}")
 
     def test_rolls_string(self) -> None:
         self.assertEqual(

@@ -240,6 +240,10 @@ class Expr:
 
 
 class TerminalExpr(Expr):
+    # Cap out at largest 32 bit signed integer to minimise
+    # potential for dos attack
+    MAX_VALUE = 2 ** 31 - 1
+
     def __init__(self):
         super().__init__()
 
@@ -256,6 +260,9 @@ class ConstExpr(TerminalExpr):
         super().__init__()
         self._value = value
 
+        if self._value > TerminalExpr.MAX_VALUE:
+            raise ValueError("Maximum constant size exceeded.")
+
     @property
     def value(self) -> Number:
         return self._value
@@ -268,6 +275,9 @@ class ConstExpr(TerminalExpr):
 
 
 class RollExpr(TerminalExpr):
+    # Things can get quite slow for large numbers of rolls, and there's little
+    # practical reason to roll more dice anyway. This makes it safe(r) to allow
+    # public access to roll.
     MAX_QTY = 1000
 
     def __init__(self, qty: int, size: int):
@@ -278,6 +288,8 @@ class RollExpr(TerminalExpr):
 
         if self.qty > RollExpr.MAX_QTY:
             raise ValueError("Maximum quantity exceeded.")
+        if self.size * self.qty > TerminalExpr.MAX_VALUE:
+            raise ValueError("Maximum roll value exceeded.")
 
     def __eq__(self, o: object) -> bool:
         return (
@@ -820,7 +832,12 @@ def apply_const_rule(exprs: typing.List[Expr]):
     while i < len(exprs):
         a, b, c = either_side(i, exprs)
 
-        if isinstance(b, ConstExpr) and type(b.total) is int and c.has_rolls():
+        if (
+            isinstance(b, ConstExpr)
+            and type(b.total) is int
+            and c
+            and c.has_rolls()
+        ):
             n = b.total
 
             # ignore type of n through this block because mypy doesn't like the

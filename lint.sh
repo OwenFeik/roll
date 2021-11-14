@@ -1,6 +1,6 @@
 DIR=$(dirname $0)
 
-source "$DIR/env/bin/active"
+source "$DIR/env/bin/active" > /dev/null
 
 echo -e "Black:\n" \
     && python -m black "$DIR/roll" "$DIR/tests" \
