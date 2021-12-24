@@ -167,7 +167,7 @@ class CloseExprToken(NonTerminalToken):
 
 
 class OperatorToken(NonTerminalToken):
-    OPERATORS = "+-*/^kad"
+    OPERATORS = "+-*/^kads"
 
     def __init__(self, token):
         super().__init__(token=token)
@@ -316,7 +316,7 @@ class RollExpr(TerminalExpr):
 
     def expr_str(self, summed=True):
         if self.qty > 1:
-            string = "(" + ", ".join(str(r) for r in self.rolls) + ")"
+            string = "(" + ", ".join(map(str, self.rolls)) + ")"
             if summed:
                 return "sum" + string
             else:
@@ -611,6 +611,7 @@ class UnaryExpr(NonTerminalExpr):
             "-": lambda expr: operator.neg(expr),
             "a": lambda roll: max(roll.rolls),
             "d": lambda roll: min(roll.rolls),
+            "s": lambda roll: sum(roll.rolls),
         }[opstr]
 
 
@@ -621,7 +622,22 @@ class RollUnaryExpr(UnaryExpr):
         assert isinstance(expr, RollExpr)
         self.roll = expr
 
-        # RollUnaryExprs are adv and disadv and both implicity raise the number
+
+class SortExpr(RollUnaryExpr):
+    OPERATOR = "s"
+
+    def __init__(self, expr: Expr) -> None:
+        super().__init__(SortExpr.OPERATOR, expr)
+
+    def roll_str(self) -> str:
+        return ", ".join(map(str, sorted(self.roll.rolls)))
+
+
+class AdvDisExpr(RollUnaryExpr):
+    def __init__(self, opstr: str, expr: Expr) -> None:
+        super().__init__(opstr, expr)
+
+        # AdvDisExprs are adv and disadv and both implicity raise the number
         # of die to at least 2.
         if self.roll.qty < 2:
             self.roll.qty = 2
@@ -690,6 +706,7 @@ OPERATOR_SPECIFICATIONS.extend(
         for (o, c) in [
             (AdvExpr.OPERATOR, AdvExpr),
             (DisadvExpr.OPERATOR, DisadvExpr),
+            (SortExpr.OPERATOR, SortExpr),
         ]
     ]
 )
@@ -876,6 +893,15 @@ def get_rolls(string: str, max_qty: int = None) -> typing.List[Expr]:
     """Parse the input string, returning up to max_qty rolls."""
 
     return parse(string)[:max_qty]
+
+
+def get_roll(string: str) -> Expr:
+    """Parse for one roll or throw ValueError."""
+
+    rolls = get_rolls(string, 1)
+    if rolls:
+        return rolls[0]
+    raise ValueError
 
 
 def calculate_total(exprs: typing.List[Expr]) -> Number:

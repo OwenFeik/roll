@@ -1,3 +1,4 @@
+import random  # Set seed
 import unittest
 
 from roll import *
@@ -104,6 +105,9 @@ class TestParser(unittest.TestCase):
         )
         self.assertRaises(ValueError, parse, f"d{TerminalExpr.MAX_VALUE + 1}")
 
+    def test_get_roll(self) -> None:
+        self.assertEqual(get_roll("0"), ConstExpr(0))
+
     def test_rolls_string(self) -> None:
         self.assertEqual(
             rolls_string(get_rolls("4d1")), "4d1\tRolls: 1, 1, 1, 1\tTotal: 4"
@@ -116,6 +120,10 @@ class TestParser(unittest.TestCase):
             "2d1\tRolls: 1, 1\tTotal: 2\n"
             "Grand Total: 4",
         )
+
+    def test_sort_operator(self) -> None:
+        random.seed(0)
+        self.assertEqual(get_roll("8d8s").roll_str(), "1, 5, 5, 7, 7, 7, 8, 8")
 
 
 if __name__ == "__main__":
