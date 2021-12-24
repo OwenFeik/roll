@@ -632,6 +632,9 @@ class SortExpr(RollUnaryExpr):
     def roll_str(self) -> str:
         return ", ".join(map(str, sorted(self.roll.rolls)))
 
+    def expr_str(self) -> str:
+        return "sum(" + self.roll_str() + ")"
+
 
 class AdvDisExpr(RollUnaryExpr):
     def __init__(self, opstr: str, expr: Expr) -> None:
