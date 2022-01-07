@@ -646,7 +646,7 @@ class AdvDisExpr(RollUnaryExpr):
             self.roll.qty = 2
 
 
-class AdvExpr(RollUnaryExpr):
+class AdvExpr(AdvDisExpr):
     OPERATOR = "a"
 
     def __init__(self, expr: Expr) -> None:
@@ -656,7 +656,7 @@ class AdvExpr(RollUnaryExpr):
         return "max" + self.roll.expr_str(False)
 
 
-class DisadvExpr(RollUnaryExpr):
+class DisadvExpr(AdvDisExpr):
     OPERATOR = "d"
 
     def __init__(self, expr: Expr) -> None:

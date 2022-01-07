@@ -71,6 +71,7 @@ class TestParser(unittest.TestCase):
         exprs = parse("d20a")
         self.assertEqual(len(exprs), 1)
         expr = exprs[0]
+        self.assertEqual(len(expr.roll_info()[0][1]), 2)
         self.assertEqual(expr.value, max(expr.roll_info()[0][1]))
 
     def test_disadvantage(self) -> None:

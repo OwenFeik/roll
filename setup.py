@@ -2,7 +2,7 @@ import setuptools
 
 setuptools.setup(
     name="roll",
-    version="1.3.0",
+    version="1.3.1",
     url="https://github.com/OwenFeik/roll.git",
     author="Owen Feik",
     author_email="owen.h.feik@gmail.com",
