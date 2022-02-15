@@ -41,21 +41,21 @@ class TestParser(unittest.TestCase):
             parse("-2d12 k3+4*(3 / 2) 2d4"),
             [
                 UnaryExpr(
-                    ValueType.NUMBER,
+                    ResultType.NUMBER,
                     "-",
                     Fixity.PREFIX,
                     OpExpr(
-                        ValueType.NUMBER,
+                        ResultType.NUMBER,
                         "+",
                         KeepExpr(RollExpr(2, 12), ConstExpr(3)),
                         OpExpr(
-                            ValueType.NUMBER,
+                            ResultType.NUMBER,
                             "*",
                             ConstExpr(4),
                             SuperExpr(
                                 [
                                     OpExpr(
-                                        ValueType.NUMBER,
+                                        ResultType.NUMBER,
                                         "/",
                                         ConstExpr(3),
                                         ConstExpr(2),
@@ -135,6 +135,16 @@ class TestParser(unittest.TestCase):
     def test_sort_operator(self) -> None:
         random.seed(0)
         self.assertEqual(get_roll("8d8s").roll_str(), "1, 5, 5, 7, 7, 7, 8, 8")
+
+    def test_list_operators(self) -> None:
+        random.seed(0)
+        self.assertEqual(get_roll("8d8k5s").roll_str(), "7, 7, 7, 8, 8")
+        random.seed(0)
+        self.assertEqual(get_roll("8d8k5a").value, 8)
+        random.seed(0)
+        self.assertEqual(get_roll("8d8k5sd").value, 7)
+        self.assertRaises(ValueError, get_roll, "8s")
+        self.assertRaises(ValueError, get_roll, "8d8ad")
 
 
 if __name__ == "__main__":
