@@ -41,16 +41,26 @@ class TestParser(unittest.TestCase):
             parse("-2d12 k3+4*(3 / 2) 2d4"),
             [
                 UnaryExpr(
+                    ValueType.NUMBER,
                     "-",
                     Fixity.PREFIX,
                     OpExpr(
+                        ValueType.NUMBER,
                         "+",
                         KeepExpr(RollExpr(2, 12), ConstExpr(3)),
                         OpExpr(
+                            ValueType.NUMBER,
                             "*",
                             ConstExpr(4),
                             SuperExpr(
-                                [OpExpr("/", ConstExpr(3), ConstExpr(2))]
+                                [
+                                    OpExpr(
+                                        ValueType.NUMBER,
+                                        "/",
+                                        ConstExpr(3),
+                                        ConstExpr(2),
+                                    )
+                                ]
                             ),
                         ),
                     ),
@@ -61,7 +71,7 @@ class TestParser(unittest.TestCase):
 
     def test_evaluation(self) -> None:
         self.assertEqual(
-            parse("10d1 + 4 ^ 2 * 3 / 2")[0].value, 10 + 4 ** 2 * 3 / 2
+            parse("10d1 + 4 ^ 2 * 3 / 2")[0].value, 10 + 4**2 * 3 / 2
         )
 
     def test_const_rule(self) -> None:
