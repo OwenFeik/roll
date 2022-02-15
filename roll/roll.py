@@ -19,6 +19,8 @@ TokenPair = typing.Tuple[typing.Optional["Token"], typing.Optional["Token"]]
 # (roll_format, results)
 RollInfo = typing.Tuple[str, typing.List[int]]
 
+ExprResult = typing.Union[int, Number, typing.Sequence[Number]]
+
 # Default seperator for output strings.
 SEP = "\t"
 
@@ -184,12 +186,36 @@ class OperatorToken(NonTerminalToken):
             raise ValueError(f"Invalid character: {c}")
 
 
+class ResultType(enum.Enum):
+    INTEGER = enum.auto()
+    NUMBER = enum.auto()
+    LIST = enum.auto()
+
+    def can_coerce_to(self, o: "ResultType") -> bool:
+        if self == o:
+            return True
+
+        return (self, o) in [
+            (ResultType.INTEGER, ResultType.NUMBER),
+            (ResultType.NUMBER, ResultType.INTEGER),
+            (ResultType.LIST, ResultType.INTEGER),
+            (ResultType.LIST, ResultType.NUMBER),
+        ]
+
+
 class Expr:
+    def __init__(self, result_type: ResultType):
+        self.result_type = result_type
+
     def __repr__(self) -> str:
         return f"{type(self).__name__}<{str(self)}>"
 
     def __str__(self):
         return str(self.total)
+
+    @property
+    def result(self) -> ExprResult:
+        return self.value
 
     @property
     def value(self) -> Number:
@@ -201,6 +227,31 @@ class Expr:
         if value // 1 == value:
             return int(value)
         return round(value, 2)
+
+    def result_coerced(self, result_type: ResultType) -> ExprResult:
+        if not self.result_type.can_coerce_to(result_type):
+            raise ValueError(
+                f"Can't coerce {self.result_type.name} to {result_type.name} "
+                f"in {self.expr_str()}."
+            )
+
+        if result_type == self.result_type:
+            return self.result
+
+        if self.result_type == ResultType.NUMBER:
+            if result_type == ResultType.INTEGER:
+                return int(self.result)  # type: ignore
+        elif self.result_type == ResultType.LIST:
+            if result_type in [ResultType.INTEGER, ResultType.NUMBER]:
+                return self.value
+        elif self.result_type == ResultType.INTEGER:
+            if result_type == ResultType.NUMBER:
+                return self.result
+
+        raise ValueError(
+            f"Unhandled ResultType coercion: {self.result_type.name} to "
+            f"{result_type.name}."
+        )
 
     def expr_str(self):
         return ""
@@ -242,10 +293,10 @@ class Expr:
 class TerminalExpr(Expr):
     # Cap out at largest 32 bit signed integer to minimise
     # potential for dos attack
-    MAX_VALUE = 2 ** 31 - 1
+    MAX_VALUE = 2**31 - 1
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, result_type: ResultType):
+        super().__init__(result_type)
 
     def __eq__(self, o: object) -> bool:
         return (
@@ -257,7 +308,7 @@ class TerminalExpr(Expr):
 
 class ConstExpr(TerminalExpr):
     def __init__(self, value: Number):
-        super().__init__()
+        super().__init__(ResultType.NUMBER)
         self._value = value
 
         if self._value > TerminalExpr.MAX_VALUE:
@@ -281,7 +332,7 @@ class RollExpr(TerminalExpr):
     MAX_QTY = 1000
 
     def __init__(self, qty: int, size: int):
-        super().__init__()
+        super().__init__(ResultType.LIST)
         self.qty = qty
         self.size = size
         self._rolls: typing.Optional[typing.List[int]] = None
@@ -311,16 +362,16 @@ class RollExpr(TerminalExpr):
         return self._rolls
 
     @property
-    def value(self) -> Number:
-        return sum(self.rolls)
+    def result(self) -> typing.Sequence[Number]:
+        return self.rolls
 
-    def expr_str(self, summed=True):
+    @property
+    def value(self) -> Number:
+        return sum(self.result)
+
+    def expr_str(self):
         if self.qty > 1:
-            string = "(" + ", ".join(map(str, self.rolls)) + ")"
-            if summed:
-                return "sum" + string
-            else:
-                return string
+            return format_rolls(self.rolls)
         else:
             return str(self.rolls[0])
 
@@ -361,8 +412,10 @@ class RollExpr(TerminalExpr):
 
 
 class NonTerminalExpr(Expr):
-    def __init__(self, exprs: typing.List[Expr]) -> None:
-        super().__init__()
+    def __init__(
+        self, result_type: ResultType, exprs: typing.List[Expr]
+    ) -> None:
+        super().__init__(result_type)
         self.exprs = exprs
 
     def __eq__(self, o: object) -> bool:
@@ -378,7 +431,7 @@ class NonTerminalExpr(Expr):
 
 class SuperExpr(NonTerminalExpr):
     def __init__(self, exprs: typing.List[Expr]):
-        super().__init__(exprs)
+        super().__init__(ResultType.LIST, exprs)
 
     def __repr__(self):
         return (
@@ -391,9 +444,14 @@ class SuperExpr(NonTerminalExpr):
     def __str__(self):
         return " + ".join(f"({expr})" for expr in self.exprs)
 
+    # No nested lists atm
+    @property
+    def result(self) -> typing.List[Number]:
+        return [expr.value for expr in self.exprs]
+
     @property
     def value(self) -> Number:
-        return sum(expr.value for expr in self.exprs)
+        return sum(self.result)
 
     def expr_str(self):
         return "(" + " + ".join(expr.expr_str() for expr in self.exprs) + ")"
@@ -416,7 +474,7 @@ class OpExprSpecification:
         opstr: str,
         precedence: int,
         fixity: Fixity,
-        arguments: typing.List[typing.Type[Expr]],
+        arguments: typing.List[ResultType],
         klasse: typing.Callable,
     ) -> None:
         self.opstr = opstr
@@ -447,12 +505,20 @@ class OpExprSpecification:
             return False
 
         if self.fixity is Fixity.INFIX:
-            return isinstance(a, self.left) and isinstance(c, self.right)
+            return (
+                isinstance(a, Expr)
+                and a.result_type.can_coerce_to(self.left)
+                and isinstance(c, Expr)
+                and c.result_type.can_coerce_to(self.right)
+            )
         elif self.fixity is Fixity.PREFIX:
-            return isinstance(c, self.arg)
+            return isinstance(c, Expr) and c.result_type.can_coerce_to(self.arg)
         elif self.fixity is Fixity.POSTFIX:
-            return isinstance(a, self.arg)
+            return isinstance(a, Expr) and a.result_type.can_coerce_to(self.arg)
 
+    # Returns a tuple of the generated expression and a number indicating how
+    # to move the token pointer for the parser. This number is equal to the
+    # negation of the number of tokens consumed less 1.
     def instantiate(
         self,
         a: typing.Union[Expr, OperatorToken, None],
@@ -465,16 +531,18 @@ class OpExprSpecification:
         assert self.satisfied(a, b, c)
 
         if self.fixity is Fixity.INFIX:
-            return [self.klasse(a, c)], -1  # type: ignore
+            return [self.klasse(a, c)]  # type: ignore
         elif self.fixity is Fixity.PREFIX:
-            return [a, self.klasse(c)], 0  # type: ignore
+            return [a, self.klasse(c)]  # type: ignore
         elif self.fixity is Fixity.POSTFIX:
-            return [self.klasse(a), c], 0  # type: ignore
+            return [self.klasse(a), c]  # type: ignore
 
 
 class OpExpr(NonTerminalExpr):
-    def __init__(self, opstr: Char, left: Expr, right: Expr) -> None:
-        super().__init__([left, right])
+    def __init__(
+        self, result_type: ResultType, opstr: Char, left: Expr, right: Expr
+    ) -> None:
+        super().__init__(result_type, [left, right])
         self.opstr = opstr
         self.left = left
         self.right = right
@@ -507,7 +575,10 @@ class OpExpr(NonTerminalExpr):
     @property
     def value(self) -> Number:
         assert self.operation is not None
-        return self.operation(self.left.value, self.right.value)
+        return self.operation(
+            self.left.result_coerced(ResultType.NUMBER),
+            self.right.result_coerced(ResultType.NUMBER),
+        )
 
     def expr_str(self):
         return f"{self.left.expr_str()} {self.opstr} {self.right.expr_str()}"
@@ -516,7 +587,9 @@ class OpExpr(NonTerminalExpr):
         return self.left.roll_info() + self.right.roll_info()
 
     def clone(self) -> "OpExpr":
-        return OpExpr(self.opstr, self.left.clone(), self.right.clone())
+        return OpExpr(
+            self.result_type, self.opstr, self.left.clone(), self.right.clone()
+        )
 
     @staticmethod
     def get_operation(opstr) -> typing.Callable:
@@ -532,10 +605,8 @@ class OpExpr(NonTerminalExpr):
 class KeepExpr(OpExpr):
     OPERATOR = "k"
 
-    def __init__(self, roll, keep) -> None:
-        super().__init__(KeepExpr.OPERATOR, roll, keep)
-
-        assert isinstance(roll, RollExpr)
+    def __init__(self, roll: Expr, keep: Expr) -> None:
+        super().__init__(ResultType.LIST, KeepExpr.OPERATOR, roll, keep)
 
     def __repr__(self) -> str:
         return (
@@ -547,29 +618,38 @@ class KeepExpr(OpExpr):
         return f"{self.roll}{KeepExpr.OPERATOR}{self.keep}"
 
     @property
-    def roll(self) -> RollExpr:
-        # guaranteed to be RollExpr by assertion in __init__, but mypy doesn't
-        # know this.
-        return self.left  # type: ignore
+    def roll(self) -> Expr:
+        return self.left
 
     @property
     def keep(self) -> Expr:
         return self.right
 
     @property
+    def result(self) -> typing.List[int]:
+        # If coercion fails, an error is thrown, thus these arguments are of
+        # appropriate type. MyPy doesn't know this.
+        return heapq.nlargest(
+            self.keep.result_coerced(ResultType.INTEGER),  # type: ignore
+            self.roll.result_coerced(ResultType.LIST),  # type: ignore
+        )
+
+    @property
     def value(self) -> Number:
-        return sum(heapq.nlargest(int(self.keep.value), self.roll.rolls))
+        return sum(self.result)
 
     def expr_str(self):
-        return f"{self.roll.expr_str(False)}k{self.keep.expr_str()}"
+        return f"{self.roll.expr_str()}k{self.keep.expr_str()}"
 
     def clone(self) -> "KeepExpr":
         return KeepExpr(self.roll.clone(), self.keep.clone())
 
 
 class UnaryExpr(NonTerminalExpr):
-    def __init__(self, opstr: str, fixity: Fixity, expr: Expr) -> None:
-        super().__init__([expr])
+    def __init__(
+        self, result_type: ResultType, opstr: str, fixity: Fixity, expr: Expr
+    ) -> None:
+        super().__init__(result_type, [expr])
 
         self.opstr = opstr
         self.fixity = fixity
@@ -599,51 +679,75 @@ class UnaryExpr(NonTerminalExpr):
             return f"{self.expr}{self.opstr}"
 
     @property
-    def value(self):
+    def result(self) -> ExprResult:
         return self.operation(self.expr)
 
+    @property
+    def value(self) -> Number:
+        if self.result_type is ResultType.LIST:
+            assert isinstance(self.result, list)
+            return sum(self.result)
+        else:
+            assert isinstance(self.result, int) or isinstance(
+                self.result, float
+            )
+            return self.result
+
+    def expr_str(self):
+        if self.fixity == Fixity.PREFIX:
+            return f"{self.opstr}{self.expr.expr_str()}"
+        else:
+            return f"{self.expr.expr_str()}{self.opstr}"
+
     def clone(self) -> "UnaryExpr":
-        return UnaryExpr(self.opstr, self.fixity, self.expr.clone())
+        return UnaryExpr(
+            self.result_type, self.opstr, self.fixity, self.expr.clone()
+        )
 
     @staticmethod
     def get_operation(opstr) -> typing.Callable:
         return {
-            "-": lambda expr: operator.neg(expr),
-            "a": lambda roll: max(roll.rolls),
-            "d": lambda roll: min(roll.rolls),
-            "s": lambda roll: sum(roll.rolls),
+            "-": lambda expr: operator.neg(
+                expr.result_coerced(ResultType.NUMBER)
+            ),
+            "a": lambda expr: max(expr.result_coerced(ResultType.LIST)),
+            "d": lambda expr: min(expr.result_coerced(ResultType.LIST)),
+            "s": lambda expr: sorted(expr.result_coerced(ResultType.LIST)),
         }[opstr]
 
 
 class RollUnaryExpr(UnaryExpr):
-    def __init__(self, opstr: str, expr: Expr) -> None:
-        super().__init__(opstr, Fixity.POSTFIX, expr)
-
-        assert isinstance(expr, RollExpr)
-        self.roll = expr
+    def __init__(self, result_type: ResultType, opstr: str, expr: Expr) -> None:
+        super().__init__(result_type, opstr, Fixity.POSTFIX, expr)
 
 
 class SortExpr(RollUnaryExpr):
     OPERATOR = "s"
 
     def __init__(self, expr: Expr) -> None:
-        super().__init__(SortExpr.OPERATOR, expr)
+        super().__init__(ResultType.LIST, SortExpr.OPERATOR, expr)
 
     def roll_str(self) -> str:
-        return ", ".join(map(str, sorted(self.roll.rolls)))
+        rolls = self.result
+        assert isinstance(rolls, list)
+        return format_rolls(rolls, False)
 
     def expr_str(self) -> str:
-        return "sum(" + self.roll_str() + ")"
+        rolls = self.result
+        assert isinstance(rolls, list)
+        return format_rolls(rolls)
 
 
 class AdvDisExpr(RollUnaryExpr):
     def __init__(self, opstr: str, expr: Expr) -> None:
-        super().__init__(opstr, expr)
+        super().__init__(ResultType.INTEGER, opstr, expr)
 
-        # AdvDisExprs are adv and disadv and both implicity raise the number
-        # of die to at least 2.
-        if self.roll.qty < 2:
-            self.roll.qty = 2
+        if isinstance(expr, RollExpr):
+            # AdvDisExprs are adv and disadv and both implicity raise the number
+            # of die in a roll to at least 2. If they are applied to a list
+            # instead, they simply act as max or min.
+            if expr.qty < 2:
+                expr.qty = 2
 
 
 class AdvExpr(AdvDisExpr):
@@ -652,9 +756,6 @@ class AdvExpr(AdvDisExpr):
     def __init__(self, expr: Expr) -> None:
         super().__init__(AdvExpr.OPERATOR, expr)
 
-    def expr_str(self):
-        return "max" + self.roll.expr_str(False)
-
 
 class DisadvExpr(AdvDisExpr):
     OPERATOR = "d"
@@ -662,15 +763,12 @@ class DisadvExpr(AdvDisExpr):
     def __init__(self, expr: Expr) -> None:
         super().__init__(DisadvExpr.OPERATOR, expr)
 
-    def expr_str(self):
-        return "min" + self.roll.expr_str(False)
-
 
 # List of OpExprSpecifications to describe different operators.
 OPERATOR_SPECIFICATIONS: typing.List[OpExprSpecification] = []
 
 # Current precedence:
-# 1: k, a, d
+# 1: k, a, d, s
 # 2: ^
 # 3: *, /
 # 4: +, -
@@ -678,14 +776,22 @@ OPERATOR_SPECIFICATIONS: typing.List[OpExprSpecification] = []
 OPERATOR_SPECIFICATIONS.extend(
     [
         OpExprSpecification(
-            o, p, Fixity.INFIX, [Expr, Expr], functools.partial(OpExpr, o)
+            o,
+            p,
+            Fixity.INFIX,
+            [ResultType.NUMBER, ResultType.NUMBER],
+            functools.partial(OpExpr, ResultType.NUMBER, o),
         )
         for (o, p) in [("^", 2), ("*", 3), ("/", 3), ("+", 4), ("-", 4)]
     ]
 )
 OPERATOR_SPECIFICATIONS.append(
     OpExprSpecification(
-        KeepExpr.OPERATOR, 1, Fixity.INFIX, [RollExpr, Expr], KeepExpr
+        KeepExpr.OPERATOR,
+        1,
+        Fixity.INFIX,
+        [ResultType.LIST, ResultType.INTEGER],
+        KeepExpr,
     )
 )
 OPERATOR_SPECIFICATIONS.append(
@@ -693,8 +799,8 @@ OPERATOR_SPECIFICATIONS.append(
         "-",
         5,
         Fixity.PREFIX,
-        [Expr],
-        functools.partial(UnaryExpr, "-", Fixity.PREFIX),
+        [ResultType.NUMBER],
+        functools.partial(UnaryExpr, ResultType.NUMBER, "-", Fixity.PREFIX),
     )
 )
 OPERATOR_SPECIFICATIONS.extend(
@@ -703,7 +809,7 @@ OPERATOR_SPECIFICATIONS.extend(
             o,
             1,
             Fixity.POSTFIX,
-            [RollExpr],
+            [ResultType.LIST],
             c,
         )
         for (o, c) in [
@@ -713,6 +819,19 @@ OPERATOR_SPECIFICATIONS.extend(
         ]
     ]
 )
+
+
+def clean_num(num: Number):
+    if num // 1 == num:
+        return int(num)
+    return round(num, 2)
+
+
+def format_rolls(rolls: typing.List[int], include_parens=True) -> str:
+    inner = ", ".join(map(lambda n: str(clean_num(n)), rolls))
+    if include_parens:
+        return f"({inner})"
+    return inner
 
 
 def consume(c: str, current_token: typing.Optional[Token]) -> TokenPair:
@@ -822,9 +941,9 @@ def parse_operators(
             a, b, c = either_side(i, exprs)
             for spec in OPERATOR_SPECIFICATIONS:
                 if spec.precedence == p and spec.satisfied(a, b, c):
-                    collapsed, index_delta = spec.instantiate(a, b, c)
+                    collapsed = spec.instantiate(a, b, c)
                     exprs = replace_around(i, exprs, collapsed)
-                    i += index_delta
+                    i -= 1
                     break
             i += 1
         p += 1
