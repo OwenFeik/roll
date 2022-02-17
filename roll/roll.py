@@ -770,9 +770,8 @@ OPERATOR_SPECIFICATIONS: typing.List[OpExprSpecification] = []
 # Current precedence:
 # 1: k, a, d, s
 # 2: ^
-# 3: *, /
+# 3: *, /, - (unary)
 # 4: +, -
-# 5: - (unary)
 OPERATOR_SPECIFICATIONS.extend(
     [
         OpExprSpecification(
@@ -797,7 +796,7 @@ OPERATOR_SPECIFICATIONS.append(
 OPERATOR_SPECIFICATIONS.append(
     OpExprSpecification(
         "-",
-        5,
+        3,
         Fixity.PREFIX,
         [ResultType.NUMBER],
         functools.partial(UnaryExpr, ResultType.NUMBER, "-", Fixity.PREFIX),
