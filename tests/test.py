@@ -40,28 +40,28 @@ class TestParser(unittest.TestCase):
         self.assertEqual(
             parse("-2d12 k3+4*(3 / 2) 2d4"),
             [
-                OpExpr(
+                UnaryExpr(
                     ResultType.NUMBER,
-                    "+",
-                    UnaryExpr(
-                        ResultType.NUMBER,
-                        "-",
-                        Fixity.PREFIX,
-                        KeepExpr(RollExpr(2, 12), ConstExpr(3)),
-                    ),
+                    "-",
+                    Fixity.PREFIX,
                     OpExpr(
                         ResultType.NUMBER,
-                        "*",
-                        ConstExpr(4),
-                        SuperExpr(
-                            [
-                                OpExpr(
-                                    ResultType.NUMBER,
-                                    "/",
-                                    ConstExpr(3),
-                                    ConstExpr(2),
-                                )
-                            ]
+                        "+",
+                        KeepExpr(RollExpr(2, 12), ConstExpr(3)),
+                        OpExpr(
+                            ResultType.NUMBER,
+                            "*",
+                            ConstExpr(4),
+                            SuperExpr(
+                                [
+                                    OpExpr(
+                                        ResultType.NUMBER,
+                                        "/",
+                                        ConstExpr(3),
+                                        ConstExpr(2),
+                                    )
+                                ]
+                            ),
                         ),
                     ),
                 ),
