@@ -341,6 +341,8 @@ class RollExpr(TerminalExpr):
             raise ValueError("Maximum quantity exceeded.")
         if self.size * self.qty > TerminalExpr.MAX_VALUE:
             raise ValueError("Maximum roll value exceeded.")
+        if not self.size:
+            raise ValueError("0 is not a valid die size.")
 
     def __eq__(self, o: object) -> bool:
         return (

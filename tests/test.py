@@ -74,6 +74,10 @@ class TestParser(unittest.TestCase):
             parse("10d1 + 4 ^ 2 * 3 / 2")[0].value, 10 + 4**2 * 3 / 2
         )
 
+    def test_zeroes(self) -> None:
+        self.assertRaises(ValueError, get_roll, "d0")
+        self.assertEqual(get_roll("0d1").value, 0)
+
     def test_const_rule(self) -> None:
         self.assertEqual(parse("2 d4"), [RollExpr(1, 4)] * 2)
 
